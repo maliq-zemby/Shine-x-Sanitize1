@@ -99,12 +99,24 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       if (cred.user.email?.toLowerCase() === ADMIN_BOOTSTRAP_EMAIL.toLowerCase()) {
         setPhone(ADMIN_WHATSAPP_PHONE);
       }
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : 'Impossible de finaliser la connexion Google. Réessayez.'
-      );
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code || '';
+      if (code === 'auth/unauthorized-domain') {
+        const host = typeof window !== 'undefined' ? window.location.hostname : 'shinexsanitize1.netlify.app';
+        setError(
+          `Domaine non autorisé (${host}). Ajoutez « ${host} » dans Firebase Console → Authentication → Settings → Authorized domains.`
+        );
+      } else if (code === 'auth/popup-blocked') {
+        setError(
+          "La fenêtre Google a été bloquée par votre navigateur. Autorisez les fenêtres pop-up pour ce site puis réessayez."
+        );
+      } else {
+        setError(
+          err instanceof Error
+            ? err.message
+            : 'Impossible de finaliser la connexion Google. Réessayez.'
+        );
+      }
     } finally {
       setLoading(false);
     }
