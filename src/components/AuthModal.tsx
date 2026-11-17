@@ -29,6 +29,7 @@ import {
 import {
   auth,
   authPersistenceReady,
+  firebaseProjectId,
   formatGoogleAuthError,
   googleProvider,
 } from '../firebase';
@@ -382,8 +383,23 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 </div>
 
                 {error && (
-                  <div className="bg-rose-50 border border-rose-200 text-rose-800 rounded-xl px-4 py-2.5 text-xs">
-                    {error}
+                  <div className="bg-rose-50 border border-rose-200 text-rose-900 rounded-xl px-4 py-3 text-xs space-y-2 leading-relaxed">
+                    <p>{error}</p>
+                    {error.includes('non autorisé') && (
+                      <div className="pt-1 border-t border-rose-200/80 space-y-1.5">
+                        <p className="font-semibold text-rose-950">
+                          Projet Firebase actif : <span className="font-mono">{firebaseProjectId}</span>
+                        </p>
+                        <a
+                          href={`https://console.firebase.google.com/project/${firebaseProjectId}/authentication/settings`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 font-semibold text-emerald-800 underline hover:text-emerald-950"
+                        >
+                          Ouvrir Authorized domains dans Firebase Console ({firebaseProjectId})
+                        </a>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -401,7 +417,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   </svg>
                   <span>
                     {loading
-                      ? 'Redirection Google en cours...'
+                      ? isEmbeddedIframe()
+                        ? 'Connexion Google en cours...'
+                        : 'Redirection Google en cours...'
                       : 'Continuer avec Google'}
                   </span>
                 </button>
@@ -409,10 +427,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <button
                   type="button"
                   disabled={loading}
-                  onClick={handleGooglePopup}
+                  onClick={isEmbeddedIframe() ? handleGoogleRedirect : handleGooglePopup}
                   className="w-full py-2.5 min-h-[42px] bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition-colors disabled:opacity-60"
                 >
-                  Alternative ordinateur : ouvrir Google en fenêtre pop-up
+                  {isEmbeddedIframe()
+                    ? 'Problème de pop-up ? Connexion par redirection Google'
+                    : 'Alternative ordinateur : ouvrir Google en fenêtre pop-up'}
                 </button>
               </div>
             ) : (

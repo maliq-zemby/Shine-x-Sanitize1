@@ -235,6 +235,7 @@ export default function App() {
     setCachedProfileForUid(resolved);
     setPreviewRole(resolved.role);
     setPendingGoogleUser(null);
+    setAuthRedirectError('');
     setShowAuthModal(false);
     setReadNotificationIds(getReadNotificationIds(resolved.uid));
 
