@@ -42,6 +42,9 @@ export function formatGoogleAuthError(err: unknown): string {
   if (code === 'auth/missing-initial-state' || code === 'auth/web-storage-unsupported') {
     return "Votre navigateur mobile bloque le stockage temporaire de redirection. Essayez en navigation standard (non privée), autorisez les cookies tiers pour firebaseapp.com ou connectez-vous par E-mail & Mot de passe.";
   }
+  if (code === 'auth/api-key-not-valid' || code === 'auth/invalid-api-key') {
+    return `Clé API Firebase non reconnue pour « ${firebaseProjectId} ». Vérifiez dans Google Cloud Console (APIs & Services → Credentials) que la clé n'a pas de restriction de domaine bloquant « ${host} » et qu'Authentication est activé dans Firebase Console.`;
+  }
   if (code === 'auth/network-request-failed') {
     return "Erreur réseau pendant l'authentification. Vérifiez votre connexion Internet et réessayez.";
   }
