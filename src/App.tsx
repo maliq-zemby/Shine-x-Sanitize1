@@ -63,6 +63,7 @@ import {
   auth,
   authPersistenceReady,
   db,
+  formatGoogleAuthError,
   handleFirestoreError,
   OperationType,
 } from './firebase';
@@ -134,6 +135,7 @@ export default function App() {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authRedirectError, setAuthRedirectError] = useState('');
   const [pendingGoogleUser, setPendingGoogleUser] = useState<FirebaseUser | null>(null);
 
   const [previewRole, setPreviewRole] = useState<Role>('client');
@@ -309,7 +311,14 @@ export default function App() {
     let cancelled = false;
 
     authPersistenceReady
-      .then(() => getRedirectResult(auth).catch(() => null))
+      .then(async () => {
+        try {
+          await getRedirectResult(auth);
+        } catch (err) {
+          setAuthRedirectError(formatGoogleAuthError(err));
+          setShowAuthModal(true);
+        }
+      })
       .finally(() => {
         if (cancelled) return;
         unsub = onAuthStateChanged(auth, async (fbUser) => {
@@ -1104,75 +1113,224 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F8FAF9] text-slate-900 pb-24 md:pb-12">
-      {/* TOP BAR (Strict 3-Zone Contract with Permanent Logo & Official Name) */}
-      <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200 px-4 sm:px-6 h-16 flex items-center justify-between gap-4 sm:gap-8">
-        {/* Zone 1: Permanent Logo + Official Brand Wordmark */}
-        <button
-          type="button"
-          onClick={() => setActiveTab('home')}
-          className="flex items-center gap-2.5 text-left whitespace-nowrap shrink-0 focus:outline-none"
-        >
-          <img
-            src={BRAND_LOGO_URL}
-            alt={APP_OFFICIAL_NAME}
-            className="w-9 h-9 rounded-lg object-contain bg-white p-0.5 border border-slate-200 shrink-0"
-            referrerPolicy="no-referrer"
-          />
-          <span className="text-sm sm:text-base font-extrabold tracking-tight text-emerald-950">
-            {APP_OFFICIAL_NAME}
-          </span>
-        </button>
-
-        {/* Zone 2: Single-line Navigation Links */}
-        <nav className="hidden lg:flex items-center gap-5 text-sm font-medium text-slate-600">
+    <div className="min-h-screen bg-[#F8FAF9] text-slate-900 pb-10">
+      {/* STICKY TOP HEADER + UNIFIED NAVIGATION BAR */}
+      <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200 shadow-xs">
+        {/* Main Brand & Account Row */}
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 sm:h-16 flex items-center justify-between gap-3 sm:gap-6">
+          {/* Zone 1: Permanent Logo + Official Brand Wordmark */}
           <button
             type="button"
             onClick={() => setActiveTab('home')}
-            className={`whitespace-nowrap shrink-0 py-1 transition-colors ${
+            className="flex items-center gap-2.5 text-left whitespace-nowrap shrink-0 focus:outline-none min-w-0"
+          >
+            <img
+              src={BRAND_LOGO_URL}
+              alt={APP_OFFICIAL_NAME}
+              className="w-9 h-9 rounded-lg object-contain bg-white p-0.5 border border-slate-200 shrink-0"
+              referrerPolicy="no-referrer"
+            />
+            <span className="text-sm sm:text-base font-extrabold tracking-tight text-emerald-950 truncate">
+              {APP_OFFICIAL_NAME}
+            </span>
+          </button>
+
+          {/* Zone 2: Desktop Single-line Navigation Links */}
+          <nav
+            aria-label="Navigation principale"
+            className="hidden lg:flex items-center gap-5 text-sm font-medium text-slate-600"
+          >
+            <button
+              type="button"
+              onClick={() => setActiveTab('home')}
+              className={`whitespace-nowrap shrink-0 py-1 transition-colors ${
+                activeTab === 'home'
+                  ? 'text-emerald-800 font-semibold border-b-2 border-emerald-700'
+                  : 'hover:text-slate-900'
+              }`}
+            >
+              Accueil
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('services')}
+              className={`whitespace-nowrap shrink-0 py-1 transition-colors ${
+                activeTab === 'services'
+                  ? 'text-emerald-800 font-semibold border-b-2 border-emerald-700'
+                  : 'hover:text-slate-900'
+              }`}
+            >
+              Services & BTP
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('mes_reservations')}
+              className={`whitespace-nowrap shrink-0 py-1 transition-colors ${
+                activeTab === 'mes_reservations'
+                  ? 'text-emerald-800 font-semibold border-b-2 border-emerald-700'
+                  : 'hover:text-slate-900'
+              }`}
+            >
+              Mes Réservations
+            </button>
+
+            {isManagerOrAdmin && (
+              <button
+                type="button"
+                onClick={() => setActiveTab('suivi_commande')}
+                className={`whitespace-nowrap shrink-0 py-1 transition-colors ${
+                  activeTab === 'suivi_commande'
+                    ? 'text-emerald-800 font-semibold border-b-2 border-emerald-700'
+                    : 'hover:text-slate-900'
+                }`}
+              >
+                Suivi et Commande
+              </button>
+            )}
+
+            {currentRole === 'agent' && (
+              <button
+                type="button"
+                onClick={() => setActiveTab('agent_space')}
+                className={`whitespace-nowrap shrink-0 py-1 transition-colors ${
+                  activeTab === 'agent_space'
+                    ? 'text-emerald-800 font-semibold border-b-2 border-emerald-700'
+                    : 'hover:text-slate-900'
+                }`}
+              >
+                Espace Agent
+              </button>
+            )}
+
+            {(currentRole === 'admin' || isActualAdmin) && (
+              <button
+                type="button"
+                onClick={() => setActiveTab('admin')}
+                className={`whitespace-nowrap shrink-0 py-1 transition-colors ${
+                  activeTab === 'admin'
+                    ? 'text-emerald-800 font-semibold border-b-2 border-emerald-700'
+                    : 'hover:text-slate-900'
+                }`}
+              >
+                Bureau Admin
+              </button>
+            )}
+          </nav>
+
+          {/* Zone 3: PWA Install / Notification Bell / Auth / Role Switcher */}
+          <div className="flex items-center gap-2 shrink-0">
+            <PWAInstallButton />
+
+            {firebaseUser && userProfile && (
+              <NotificationBell
+                notifications={visibleNotifications}
+                readIds={readNotificationIds}
+                pushPermission={pushPermission}
+                onEnablePush={handleEnablePushNotifications}
+                onMarkAsRead={handleMarkNotificationRead}
+                onMarkAllAsRead={handleMarkAllNotificationsRead}
+                onNavigateTab={(tab) => setActiveTab(tab)}
+              />
+            )}
+
+            {isActualAdmin && (
+              <select
+                aria-label="Changer de vue rôle"
+                value={currentRole}
+                onChange={(e) => handleRoleSwitch(e.target.value as Role)}
+                className="bg-slate-100 border border-slate-200 text-slate-800 text-xs font-semibold rounded-xl px-2.5 py-2 min-h-[40px] cursor-pointer focus:outline-none focus:ring-2 focus:ring-emerald-700"
+              >
+                <option value="client">Vue : Client</option>
+                <option value="agent">Vue : Agent</option>
+                <option value="manager">Vue : Gérant</option>
+                <option value="admin">Vue : Admin</option>
+              </select>
+            )}
+
+            {firebaseUser && userProfile ? (
+              <button
+                type="button"
+                onClick={handleSignOut}
+                title="Se déconnecter"
+                className="px-3 py-2 min-h-[40px] bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-semibold rounded-xl inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">{userProfile.displayName.split(' ')[0]}</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthRedirectError('');
+                  setShowAuthModal(true);
+                }}
+                className="px-3.5 py-2 min-h-[40px] bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-xl inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                <span>Connexion</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Mobile & Tablet Top Sub-Navigation Bar (moved from bottom to top, sticky under header) */}
+        <nav
+          aria-label="Navigation mobile supérieure"
+          className="lg:hidden border-t border-slate-100 bg-slate-50/90 px-3 py-1.5 flex items-center gap-1.5 overflow-x-auto"
+        >
+          <button
+            type="button"
+            onClick={() => setActiveTab('home')}
+            className={`px-3 py-2 min-h-[40px] rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors ${
               activeTab === 'home'
-                ? 'text-emerald-800 font-semibold border-b-2 border-emerald-700'
-                : 'hover:text-slate-900'
+                ? 'bg-emerald-700 text-white shadow-xs'
+                : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
             }`}
           >
-            Accueil
+            <Home className="w-3.5 h-3.5" />
+            <span>Accueil</span>
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTab('services')}
-            className={`whitespace-nowrap shrink-0 py-1 transition-colors ${
+            className={`px-3 py-2 min-h-[40px] rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors ${
               activeTab === 'services'
-                ? 'text-emerald-800 font-semibold border-b-2 border-emerald-700'
-                : 'hover:text-slate-900'
+                ? 'bg-emerald-700 text-white shadow-xs'
+                : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
             }`}
           >
-            Services & BTP
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>Services</span>
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTab('mes_reservations')}
-            className={`whitespace-nowrap shrink-0 py-1 transition-colors ${
+            className={`px-3 py-2 min-h-[40px] rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors ${
               activeTab === 'mes_reservations'
-                ? 'text-emerald-800 font-semibold border-b-2 border-emerald-700'
-                : 'hover:text-slate-900'
+                ? 'bg-emerald-700 text-white shadow-xs'
+                : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
             }`}
           >
-            Mes Réservations
+            <CalendarCheck className="w-3.5 h-3.5" />
+            <span>Réservations</span>
           </button>
 
           {isManagerOrAdmin && (
             <button
               type="button"
               onClick={() => setActiveTab('suivi_commande')}
-              className={`whitespace-nowrap shrink-0 py-1 transition-colors ${
+              className={`px-3 py-2 min-h-[40px] rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors ${
                 activeTab === 'suivi_commande'
-                  ? 'text-emerald-800 font-semibold border-b-2 border-emerald-700'
-                  : 'hover:text-slate-900'
+                  ? 'bg-emerald-700 text-white shadow-xs'
+                  : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
               }`}
             >
-              Suivi et Commande
+              <ClipboardList className="w-3.5 h-3.5" />
+              <span>Suivi &amp; Cmd</span>
             </button>
           )}
 
@@ -1180,13 +1338,14 @@ export default function App() {
             <button
               type="button"
               onClick={() => setActiveTab('agent_space')}
-              className={`whitespace-nowrap shrink-0 py-1 transition-colors ${
+              className={`px-3 py-2 min-h-[40px] rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors ${
                 activeTab === 'agent_space'
-                  ? 'text-emerald-800 font-semibold border-b-2 border-emerald-700'
-                  : 'hover:text-slate-900'
+                  ? 'bg-emerald-700 text-white shadow-xs'
+                  : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
               }`}
             >
-              Espace Agent
+              <Wrench className="w-3.5 h-3.5" />
+              <span>Agent</span>
             </button>
           )}
 
@@ -1194,68 +1353,17 @@ export default function App() {
             <button
               type="button"
               onClick={() => setActiveTab('admin')}
-              className={`whitespace-nowrap shrink-0 py-1 transition-colors ${
+              className={`px-3 py-2 min-h-[40px] rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors ${
                 activeTab === 'admin'
-                  ? 'text-emerald-800 font-semibold border-b-2 border-emerald-700'
-                  : 'hover:text-slate-900'
+                  ? 'bg-emerald-700 text-white shadow-xs'
+                  : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
               }`}
             >
-              Bureau Admin
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span>Admin</span>
             </button>
           )}
         </nav>
-
-        {/* Zone 3: PWA Install / Notification Bell / Auth / Role Switcher */}
-        <div className="flex items-center gap-2 shrink-0">
-          <PWAInstallButton />
-
-          {firebaseUser && userProfile && (
-            <NotificationBell
-              notifications={visibleNotifications}
-              readIds={readNotificationIds}
-              pushPermission={pushPermission}
-              onEnablePush={handleEnablePushNotifications}
-              onMarkAsRead={handleMarkNotificationRead}
-              onMarkAllAsRead={handleMarkAllNotificationsRead}
-              onNavigateTab={(tab) => setActiveTab(tab)}
-            />
-          )}
-
-          {isActualAdmin && (
-            <select
-              aria-label="Changer de vue rôle"
-              value={currentRole}
-              onChange={(e) => handleRoleSwitch(e.target.value as Role)}
-              className="bg-slate-100 border border-slate-200 text-slate-800 text-xs font-semibold rounded-xl px-2.5 py-2 min-h-[40px] cursor-pointer focus:outline-none focus:ring-2 focus:ring-emerald-700"
-            >
-              <option value="client">Vue : Client</option>
-              <option value="agent">Vue : Agent</option>
-              <option value="manager">Vue : Gérant</option>
-              <option value="admin">Vue : Admin</option>
-            </select>
-          )}
-
-          {firebaseUser && userProfile ? (
-            <button
-              type="button"
-              onClick={handleSignOut}
-              title="Se déconnecter"
-              className="px-3 py-2 min-h-[40px] bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-semibold rounded-xl inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">{userProfile.displayName.split(' ')[0]}</span>
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setShowAuthModal(true)}
-              className="px-3.5 py-2 min-h-[40px] bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-xl inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
-            >
-              <LogIn className="w-3.5 h-3.5" />
-              <span>Connexion</span>
-            </button>
-          )}
-        </div>
       </header>
 
       {/* ACCOUNT STATUS ALERTS */}
@@ -1280,7 +1388,7 @@ export default function App() {
       )}
 
       {/* MAIN CONTENT */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 pb-10">
         {/* ==================== ACCUEIL ==================== */}
         {activeTab === 'home' && (
           <div className="space-y-10">
@@ -1831,84 +1939,6 @@ export default function App() {
         <div>Airtel Money · Moov Money · Espèces · Carte bancaire</div>
       </footer>
 
-      {/* MOBILE BOTTOM TAB BAR (<=15% viewport height) */}
-      <nav
-        aria-label="Navigation mobile"
-        className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 h-16 px-2 flex items-center justify-around"
-      >
-        <button
-          type="button"
-          onClick={() => setActiveTab('home')}
-          className={`flex flex-col items-center justify-center min-w-[56px] min-h-[44px] text-[10px] font-medium ${
-            activeTab === 'home' ? 'text-emerald-800 font-bold' : 'text-slate-500'
-          }`}
-        >
-          <Home className="w-5 h-5 mb-0.5" />
-          <span>Accueil</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('services')}
-          className={`flex flex-col items-center justify-center min-w-[56px] min-h-[44px] text-[10px] font-medium ${
-            activeTab === 'services' ? 'text-emerald-800 font-bold' : 'text-slate-500'
-          }`}
-        >
-          <Sparkles className="w-5 h-5 mb-0.5" />
-          <span>Services</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('mes_reservations')}
-          className={`flex flex-col items-center justify-center min-w-[56px] min-h-[44px] text-[10px] font-medium ${
-            activeTab === 'mes_reservations' ? 'text-emerald-800 font-bold' : 'text-slate-500'
-          }`}
-        >
-          <CalendarCheck className="w-5 h-5 mb-0.5" />
-          <span>Réservations</span>
-        </button>
-
-        {isManagerOrAdmin && (
-          <button
-            type="button"
-            onClick={() => setActiveTab('suivi_commande')}
-            className={`flex flex-col items-center justify-center min-w-[56px] min-h-[44px] text-[10px] font-medium ${
-              activeTab === 'suivi_commande' ? 'text-emerald-800 font-bold' : 'text-slate-500'
-            }`}
-          >
-            <ClipboardList className="w-5 h-5 mb-0.5" />
-            <span>Suivi & Cmd</span>
-          </button>
-        )}
-
-        {currentRole === 'agent' && (
-          <button
-            type="button"
-            onClick={() => setActiveTab('agent_space')}
-            className={`flex flex-col items-center justify-center min-w-[56px] min-h-[44px] text-[10px] font-medium ${
-              activeTab === 'agent_space' ? 'text-emerald-800 font-bold' : 'text-slate-500'
-            }`}
-          >
-            <Wrench className="w-5 h-5 mb-0.5" />
-            <span>Agent</span>
-          </button>
-        )}
-
-        {(currentRole === 'admin' || isActualAdmin) && (
-          <button
-            type="button"
-            onClick={() => setActiveTab('admin')}
-            className={`flex flex-col items-center justify-center min-w-[56px] min-h-[44px] text-[10px] font-medium ${
-              activeTab === 'admin' ? 'text-emerald-800 font-bold' : 'text-slate-500'
-            }`}
-          >
-            <ShieldCheck className="w-5 h-5 mb-0.5" />
-            <span>Admin</span>
-          </button>
-        )}
-      </nav>
-
       {/* UNIFIED VEHICLE & MOBILITY SUB-MENU MODAL */}
       {showVehicleMobilityModal && (
         <VehicleMobilityModal
@@ -1937,11 +1967,15 @@ export default function App() {
       {showAuthModal && (
         <AuthModal
           pendingGoogleUser={pendingGoogleUser}
+          initialError={authRedirectError}
           onAuthComplete={handleCompleteOnboarding}
           onEmailVerified={(verifiedUser) => {
             syncSignedInUserProfile(verifiedUser).catch(() => {});
           }}
-          onClose={() => setShowAuthModal(false)}
+          onClose={() => {
+            setAuthRedirectError('');
+            setShowAuthModal(false);
+          }}
         />
       )}
 

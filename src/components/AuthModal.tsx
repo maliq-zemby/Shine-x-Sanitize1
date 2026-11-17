@@ -29,13 +29,14 @@ import {
 import {
   auth,
   authPersistenceReady,
-  firebaseProjectId,
+  formatGoogleAuthError,
   googleProvider,
 } from '../firebase';
 import { Role, UserProfile } from '../types';
 
 interface AuthModalProps {
   pendingGoogleUser: FirebaseUser | null;
+  initialError?: string;
   onAuthComplete: (profile: UserProfile) => void;
   onEmailVerified?: (user: FirebaseUser) => void;
   onClose: () => void;
@@ -43,8 +44,17 @@ interface AuthModalProps {
 
 const WHATSAPP_INTERNATIONAL_REGEX = /^\+[1-9][0-9\s\-]{6,30}$/;
 
+function isEmbeddedIframe(): boolean {
+  try {
+    return typeof window !== 'undefined' && window.self !== window.top;
+  } catch {
+    return true;
+  }
+}
+
 export const AuthModal: React.FC<AuthModalProps> = ({
   pendingGoogleUser,
+  initialError = '',
   onAuthComplete,
   onEmailVerified,
   onClose,
@@ -65,8 +75,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(initialError);
   const [infoNotice, setInfoNotice] = useState('');
+
+  useEffect(() => {
+    if (initialError) {
+      setError(initialError);
+    }
+  }, [initialError]);
 
   useEffect(() => {
     setGoogleUser(pendingGoogleUser);
@@ -94,7 +110,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   const canSubmit = Boolean(googleUser) && isPhoneValid && acceptedTerms && isCompanyValid;
 
-  const handleGoogleSignIn = async () => {
+  const handleGooglePopup = async () => {
     setError('');
     setInfoNotice('');
     setLoading(true);
@@ -106,23 +122,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         setPhone(ADMIN_WHATSAPP_PHONE);
       }
     } catch (err: unknown) {
-      const code = (err as { code?: string })?.code || '';
-      if (code === 'auth/unauthorized-domain') {
-        const host = typeof window !== 'undefined' ? window.location.hostname : 'shinexsanitize1.netlify.app';
-        setError(
-          `Domaine non autorisé (${host}) dans le projet Firebase « ${firebaseProjectId} ». Ajoutez « ${host} » dans Firebase Console (${firebaseProjectId}) → Authentication → Settings → Authorized domains.`
-        );
-      } else if (code === 'auth/popup-blocked') {
-        setError(
-          "La fenêtre pop-up Google a été bloquée par votre navigateur. Autorisez les pop-ups ou utilisez le bouton « Connexion par redirection » ci-dessous."
-        );
-      } else {
-        setError(
-          err instanceof Error
-            ? err.message
-            : 'Impossible de finaliser la connexion Google. Réessayez.'
-        );
-      }
+      setError(formatGoogleAuthError(err));
     } finally {
       setLoading(false);
     }
@@ -136,21 +136,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       await authPersistenceReady;
       await signInWithRedirect(auth, googleProvider);
     } catch (err: unknown) {
-      const code = (err as { code?: string })?.code || '';
-      if (code === 'auth/unauthorized-domain') {
-        const host = typeof window !== 'undefined' ? window.location.hostname : 'shinexsanitize1.netlify.app';
-        setError(
-          `Domaine non autorisé (${host}) dans le projet Firebase « ${firebaseProjectId} ». Ajoutez « ${host} » dans Firebase Console (${firebaseProjectId}) → Authentication → Settings → Authorized domains.`
-        );
-      } else {
-        setError(
-          err instanceof Error
-            ? err.message
-            : 'Impossible de lancer la redirection Google.'
-        );
-      }
+      setError(formatGoogleAuthError(err));
       setLoading(false);
     }
+  };
+
+  const handlePrimaryGoogleAuth = () => {
+    if (isEmbeddedIframe()) {
+      return handleGooglePopup();
+    }
+    return handleGoogleRedirect();
   };
 
   const handleEmailPasswordAuth = async (e: React.FormEvent) => {
@@ -395,7 +390,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <button
                   type="button"
                   disabled={loading}
-                  onClick={handleGoogleSignIn}
+                  onClick={handlePrimaryGoogleAuth}
                   className="w-full py-3 min-h-[48px] bg-slate-900 hover:bg-emerald-800 text-white text-sm font-semibold rounded-xl shadow-sm transition-colors flex items-center justify-center gap-3 disabled:opacity-60"
                 >
                   <svg className="w-4 h-4" viewBox="0 0 24 24" aria-hidden="true">
@@ -404,16 +399,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       d="M21.35 11.1h-9.17v2.73h6.51c-.33 3.81-3.5 5.44-6.5 5.44C8.36 19.27 5 16.25 5 12c0-4.1 3.2-7.27 7.2-7.27c3.09 0 4.9 1.97 4.9 1.97L19 4.72S16.56 2 12.1 2C6.42 2 2.03 6.8 2.03 12c0 5.05 4.13 10 10.22 10c5.35 0 9.25-3.67 9.25-9.09c0-1.15-.15-1.81-.15-1.81Z"
                     />
                   </svg>
-                  <span>{loading ? 'Connexion en cours...' : 'Continuer avec Google'}</span>
+                  <span>
+                    {loading
+                      ? 'Redirection Google en cours...'
+                      : 'Continuer avec Google'}
+                  </span>
                 </button>
 
                 <button
                   type="button"
                   disabled={loading}
-                  onClick={handleGoogleRedirect}
+                  onClick={handleGooglePopup}
                   className="w-full py-2.5 min-h-[42px] bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition-colors disabled:opacity-60"
                 >
-                  Pop-up bloqué sur mobile ? Connexion par redirection Google
+                  Alternative ordinateur : ouvrir Google en fenêtre pop-up
                 </button>
               </div>
             ) : (

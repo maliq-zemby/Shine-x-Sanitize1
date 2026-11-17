@@ -15,6 +15,32 @@ export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 export const firebaseProjectId = firebaseConfig.projectId;
+export const firebaseAuthDomain = firebaseConfig.authDomain;
+
+export function formatGoogleAuthError(err: unknown): string {
+  const code = (err as { code?: string })?.code || '';
+  const host =
+    typeof window !== 'undefined' ? window.location.hostname : 'shinexsanitize1.netlify.app';
+
+  if (code === 'auth/unauthorized-domain') {
+    return `Domaine « ${host} » non autorisé dans le projet Firebase « ${firebaseProjectId} ». Ajoutez « ${host} » dans Firebase Console (${firebaseProjectId}) → Authentication → Settings → Authorized domains.`;
+  }
+  if (code === 'auth/popup-blocked') {
+    return "La fenêtre pop-up Google a été bloquée par votre navigateur. Utilisez la connexion par redirection ci-dessous.";
+  }
+  if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+    return "La connexion Google a été annulée avant la fin. Vous pouvez réessayer ou utiliser la redirection.";
+  }
+  if (code === 'auth/missing-initial-state' || code === 'auth/web-storage-unsupported') {
+    return "Votre navigateur mobile bloque le stockage temporaire de redirection. Essayez en navigation standard (non privée), autorisez les cookies tiers pour firebaseapp.com ou connectez-vous par E-mail & Mot de passe.";
+  }
+  if (code === 'auth/network-request-failed') {
+    return "Erreur réseau pendant l'authentification. Vérifiez votre connexion Internet et réessayez.";
+  }
+  return err instanceof Error
+    ? err.message
+    : 'Impossible de finaliser la connexion Google. Réessayez.';
+}
 
 export const authPersistenceReady: Promise<void> = setPersistence(
   auth,

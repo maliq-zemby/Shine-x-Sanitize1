@@ -241,7 +241,7 @@ export const LiveNotificationToast: React.FC<LiveNotificationToastProps> = ({
     <div
       role="status"
       aria-live="polite"
-      className="fixed bottom-20 lg:bottom-5 right-4 z-50 max-w-sm w-[calc(100vw-2rem)] bg-slate-900 text-white rounded-2xl p-4 shadow-2xl border border-slate-700 flex items-start gap-3"
+      className="fixed bottom-4 right-4 z-50 max-w-sm w-[calc(100vw-2rem)] bg-slate-900 text-white rounded-2xl p-4 shadow-2xl border border-slate-700 flex items-start gap-3"
     >
       <div className="w-9 h-9 rounded-xl bg-emerald-700 text-white flex items-center justify-center shrink-0">
         <Icon className="w-4 h-4" />
