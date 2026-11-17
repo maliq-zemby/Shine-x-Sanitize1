@@ -7,10 +7,18 @@ import {
   setPersistence,
 } from 'firebase/auth';
 import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
-import firebaseConfig from '../firebase-applet-config.json';
+const firebaseConfig = {
+  apiKey: 'AIzaSyCB4t-bhTi0pd-1vpfJ0uYOiMfAyLGFsXc',
+  authDomain: 'shinexsanitize2.firebaseapp.com',
+  projectId: 'shinexsanitize2',
+  storageBucket: 'shinexsanitize2.firebasestorage.app',
+  messagingSenderId: '710885153983',
+  appId: '1:710885153983:web:1a68b273869b1f18127a0a',
+  measurementId: 'G-C22H4T9GVY',
+};
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const db = getFirestore(app);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
