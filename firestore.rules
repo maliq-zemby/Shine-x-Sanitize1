@@ -1,0 +1,277 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isBootstrappedAdmin() {
+      return isSignedIn() && request.auth.token.email == 'maliqzemby8@gmail.com';
+    }
+
+    function hasUserDoc() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function currentUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isNotBanned() {
+      return !hasUserDoc() || currentUserData().accountStatus != 'banned';
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() || (
+        hasUserDoc() &&
+        currentUserData().role == 'admin' &&
+        currentUserData().accountStatus == 'active'
+      );
+    }
+
+    function isActiveManager() {
+      return hasUserDoc() &&
+        currentUserData().role == 'manager' &&
+        currentUserData().accountStatus == 'active';
+    }
+
+    function isActiveAgent() {
+      return hasUserDoc() &&
+        currentUserData().role == 'agent' &&
+        currentUserData().accountStatus == 'active';
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'role', 'accountStatus', 'phone', 'acceptedTerms', 'acceptedTermsAt', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'displayName', 'photoURL', 'role', 'accountStatus', 'phone', 'acceptedTerms', 'acceptedTermsAt', 'companyName', 'companyDescription', 'commune', 'banReason', 'createdAt', 'updatedAt'])
+        && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 160
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120
+        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 500))
+        && data.role in ['client', 'agent', 'manager', 'admin']
+        && data.accountStatus in ['active', 'pending', 'rejected', 'banned']
+        && data.phone is string && data.phone.size() >= 8 && data.phone.size() <= 40 && data.phone.matches('^\\+[1-9][0-9\\s\\-]{6,30}$')
+        && data.acceptedTerms is bool && data.acceptedTerms == true
+        && data.acceptedTermsAt is string && data.acceptedTermsAt.size() >= 4 && data.acceptedTermsAt.size() <= 64
+        && (!('companyName' in data) || (data.companyName is string && data.companyName.size() <= 120))
+        && (!('companyDescription' in data) || (data.companyDescription is string && data.companyDescription.size() <= 600))
+        && (!('commune' in data) || (data.commune is string && data.commune.size() <= 120))
+        && (!('banReason' in data) || (data.banReason is string && data.banReason.size() <= 300))
+        && data.createdAt is string && data.createdAt.size() <= 64
+        && data.updatedAt is string && data.updatedAt.size() <= 64;
+    }
+
+    function isValidService(data) {
+      return data.keys().hasAll(['id', 'name', 'category', 'basePrice', 'duration', 'description', 'image', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'name', 'category', 'vehicleType', 'basePrice', 'duration', 'description', 'image', 'materials', 'availableOptions', 'updatedBy', 'updatedAt'])
+        && isValidId(data.id)
+        && data.name is string && data.name.size() >= 2 && data.name.size() <= 140
+        && data.category in ['Mobilier', 'Professionnel', 'Literie', 'Sol', 'Véhicules', 'BTP']
+        && (!('vehicleType' in data) || data.vehicleType in ['4_wheels', 'moto', 'velo'])
+        && data.basePrice is number && data.basePrice >= 1000 && data.basePrice <= 10000000
+        && data.duration is string && data.duration.size() <= 40
+        && data.description is string && data.description.size() <= 600
+        && data.image is string && data.image.size() <= 300
+        && (!('materials' in data) || (data.materials is list && data.materials.size() <= 12 && (data.materials.size() == 0 || data.materials[0] is string)))
+        && (!('availableOptions' in data) || (data.availableOptions is list && data.availableOptions.size() <= 12 && (data.availableOptions.size() == 0 || data.availableOptions[0] is string)))
+        && (!('updatedBy' in data) || (data.updatedBy is string && data.updatedBy.size() <= 120))
+        && data.updatedAt is string && data.updatedAt.size() <= 64;
+    }
+
+    function isValidBooking(data) {
+      return data.keys().hasAll(['id', 'ownerUid', 'serviceId', 'serviceName', 'serviceCategory', 'clientName', 'clientPhone', 'commune', 'address', 'clientCoords', 'details', 'clientOfferPrice', 'finalPrice', 'status', 'assignedAgents', 'gpsActive', 'clientGpsActive', 'beforePhotos', 'afterPhotos', 'paymentMethod', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'ownerUid', 'serviceId', 'serviceName', 'serviceCategory', 'vehicleType', 'clientName', 'clientPhone', 'commune', 'address', 'clientCoords', 'details', 'clientOfferPrice', 'managerCounterPrice', 'priceAdjustmentNote', 'finalPrice', 'status', 'rejectionReason', 'assignedAgents', 'gpsActive', 'clientGpsActive', 'agentGps', 'startedAt', 'completedAt', 'beforePhotos', 'afterPhotos', 'paymentMethod', 'rating', 'review', 'reviewSubmittedAt', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128
+        && data.serviceId is string && data.serviceId.size() <= 64
+        && data.serviceName is string && data.serviceName.size() >= 2 && data.serviceName.size() <= 180
+        && data.serviceCategory is string && data.serviceCategory.size() <= 40
+        && (!('vehicleType' in data) || data.vehicleType in ['4_wheels', 'moto', 'velo'])
+        && data.clientName is string && data.clientName.size() >= 1 && data.clientName.size() <= 120
+        && data.clientPhone is string && data.clientPhone.size() >= 4 && data.clientPhone.size() <= 40
+        && data.commune is string && data.commune.size() >= 2 && data.commune.size() <= 120
+        && data.address is string && data.address.size() >= 2 && data.address.size() <= 240
+        && data.clientCoords is map
+        && data.details is map
+        && data.clientOfferPrice is number && data.clientOfferPrice >= 1000
+        && (!('managerCounterPrice' in data) || data.managerCounterPrice is number)
+        && (!('priceAdjustmentNote' in data) || (data.priceAdjustmentNote is string && data.priceAdjustmentNote.size() <= 300))
+        && data.finalPrice is number && data.finalPrice >= 1000
+        && data.status in ['pending_negotiation', 'counter_offered', 'confirmed', 'in_transit', 'in_progress', 'completed', 'cancelled']
+        && (!('rejectionReason' in data) || (data.rejectionReason is string && data.rejectionReason.size() <= 300))
+        && data.assignedAgents is list && data.assignedAgents.size() <= 10 && (data.assignedAgents.size() == 0 || data.assignedAgents[0] is string)
+        && data.gpsActive is bool
+        && data.clientGpsActive is bool
+        && (!('agentGps' in data) || data.agentGps is map)
+        && (!('startedAt' in data) || (data.startedAt is string && data.startedAt.size() <= 64))
+        && (!('completedAt' in data) || (data.completedAt is string && data.completedAt.size() <= 64))
+        && data.beforePhotos is list && data.beforePhotos.size() <= 5 && (data.beforePhotos.size() == 0 || data.beforePhotos[0] is string)
+        && data.afterPhotos is list && data.afterPhotos.size() <= 5 && (data.afterPhotos.size() == 0 || data.afterPhotos[0] is string)
+        && data.paymentMethod in ['Airtel Money', 'Moov Money', 'Espèces', 'Carte bancaire']
+        && (!('rating' in data) || (data.rating is number && data.rating >= 1 && data.rating <= 5))
+        && (!('review' in data) || (data.review is string && data.review.size() <= 800))
+        && (!('reviewSubmittedAt' in data) || (data.reviewSubmittedAt is string && data.reviewSubmittedAt.size() <= 64))
+        && data.createdAt is string && data.createdAt.size() <= 64
+        && data.updatedAt is string && data.updatedAt.size() <= 64;
+    }
+
+    function isValidPromotion(data) {
+      return data.keys().hasAll(['id', 'title', 'description', 'discountLabel', 'companyName', 'status', 'createdByUid', 'createdAt'])
+        && data.keys().hasOnly(['id', 'title', 'description', 'discountLabel', 'serviceCategory', 'companyName', 'validUntil', 'status', 'createdByUid', 'createdAt'])
+        && isValidId(data.id)
+        && data.title is string && data.title.size() >= 3 && data.title.size() <= 120
+        && data.description is string && data.description.size() >= 5 && data.description.size() <= 500
+        && data.discountLabel is string && data.discountLabel.size() >= 2 && data.discountLabel.size() <= 40
+        && (!('serviceCategory' in data) || (data.serviceCategory is string && data.serviceCategory.size() <= 60))
+        && data.companyName is string && data.companyName.size() >= 2 && data.companyName.size() <= 120
+        && (!('validUntil' in data) || (data.validUntil is string && data.validUntil.size() <= 40))
+        && data.status in ['pending', 'approved', 'rejected']
+        && data.createdByUid is string && data.createdByUid.size() >= 1 && data.createdByUid.size() <= 128
+        && data.createdAt is string && data.createdAt.size() <= 64;
+    }
+
+    function isValidNotification(data) {
+      return data.keys().hasAll(['id', 'type', 'title', 'body', 'targetRoles', 'relatedId', 'actorUid', 'createdAt'])
+        && data.keys().hasOnly(['id', 'type', 'title', 'body', 'targetRoles', 'targetAgentNames', 'relatedId', 'relatedTab', 'actorUid', 'createdAt'])
+        && isValidId(data.id)
+        && data.type in ['new_booking', 'agent_assigned', 'new_registration', 'promo_approved']
+        && data.title is string && data.title.size() >= 2 && data.title.size() <= 140
+        && data.body is string && data.body.size() >= 2 && data.body.size() <= 400
+        && data.targetRoles is list && data.targetRoles.size() >= 1 && data.targetRoles.size() <= 4 && data.targetRoles.hasOnly(['client', 'agent', 'manager', 'admin'])
+        && (!('targetAgentNames' in data) || (data.targetAgentNames is list && data.targetAgentNames.size() <= 10 && (data.targetAgentNames.size() == 0 || data.targetAgentNames[0] is string)))
+        && data.relatedId is string && data.relatedId.size() >= 1 && data.relatedId.size() <= 128
+        && (!('relatedTab' in data) || data.relatedTab in ['home', 'services', 'mes_reservations', 'suivi_commande', 'agent_space', 'admin'])
+        && data.actorUid is string && data.actorUid.size() >= 1 && data.actorUid.size() <= 128
+        && data.createdAt is string && data.createdAt.size() <= 64;
+    }
+
+    match /test/connection {
+      allow get: if true;
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isSignedIn() && isOwner(userId) && isValidId(userId) && isValidUserProfile(incoming())
+        && incoming().uid == request.auth.uid
+        && (
+          (incoming().role in ['client', 'agent'] && incoming().accountStatus == 'active')
+          || (incoming().role == 'manager' && incoming().accountStatus == 'pending' && 'companyName' in incoming() && incoming().companyName.size() >= 2)
+          || (isBootstrappedAdmin() && incoming().role == 'admin' && incoming().accountStatus == 'active')
+        );
+      allow update: if isSignedIn() && isValidId(userId) && isValidUserProfile(incoming()) && (
+        isAdmin()
+        || (
+          isOwner(userId)
+          && existing().accountStatus != 'banned'
+          && incoming().uid == existing().uid
+          && incoming().role == existing().role
+          && incoming().accountStatus == existing().accountStatus
+          && incoming().createdAt == existing().createdAt
+          && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'phone', 'companyName', 'companyDescription', 'commune', 'updatedAt'])
+        )
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /services/{serviceId} {
+      allow get, list: if true;
+      allow create, update: if isSignedIn() && isValidId(serviceId) && isValidService(incoming()) && (isAdmin() || isActiveManager());
+      allow delete: if isAdmin();
+    }
+
+    match /bookings/{bookingId} {
+      allow get: if isSignedIn() && isValidId(bookingId) && (
+        existing().ownerUid == request.auth.uid || isAdmin() || isActiveManager() || isActiveAgent()
+      );
+      allow list: if isSignedIn() && (
+        existing().ownerUid == request.auth.uid || isAdmin() || isActiveManager() || isActiveAgent()
+      );
+      allow create: if isSignedIn() && isNotBanned() && isValidId(bookingId) && isValidBooking(incoming())
+        && incoming().ownerUid == request.auth.uid
+        && incoming().status == 'pending_negotiation';
+      allow update: if isSignedIn() && isNotBanned() && isValidId(bookingId) && isValidBooking(incoming())
+        && incoming().id == existing().id
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && (
+          isAdmin()
+          || (
+            isActiveManager()
+            && !(existing().status in ['completed', 'cancelled'])
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'managerCounterPrice', 'priceAdjustmentNote', 'finalPrice', 'rejectionReason', 'assignedAgents', 'agentGps', 'updatedAt'])
+          )
+          || (
+            isActiveAgent()
+            && existing().status in ['confirmed', 'in_transit', 'in_progress']
+            && incoming().finalPrice == existing().finalPrice
+            && incoming().diff(existing()).affectedKeys().hasOnly(['gpsActive', 'agentGps', 'status', 'startedAt', 'completedAt', 'beforePhotos', 'afterPhotos', 'updatedAt'])
+          )
+          || (
+            existing().ownerUid == request.auth.uid
+            && existing().status != 'cancelled'
+            && incoming().finalPrice == existing().finalPrice
+            && (
+              (incoming().diff(existing()).affectedKeys().hasOnly(['clientGpsActive', 'clientCoords', 'updatedAt']))
+              || (existing().status == 'counter_offered' && incoming().status == 'confirmed' && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+              || (incoming().diff(existing()).affectedKeys().hasOnly(['rating', 'review', 'reviewSubmittedAt', 'updatedAt']))
+            )
+          )
+        );
+      allow delete: if isAdmin();
+    }
+
+    match /promotions/{promoId} {
+      allow get: if existing().status == 'approved' || isAdmin() || (isSignedIn() && existing().createdByUid == request.auth.uid);
+      allow list: if existing().status == 'approved' || isAdmin() || (isSignedIn() && existing().createdByUid == request.auth.uid);
+      allow create: if isSignedIn() && isNotBanned() && isValidId(promoId) && isValidPromotion(incoming())
+        && incoming().createdByUid == request.auth.uid
+        && (isAdmin() || (isActiveManager() && incoming().status == 'pending'));
+      allow update: if isSignedIn() && isValidId(promoId) && isValidPromotion(incoming()) && isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /notifications/{notificationId} {
+      allow get: if isSignedIn() && isNotBanned() && isValidId(notificationId) && (
+        isAdmin() || (hasUserDoc() && currentUserData().role in existing().targetRoles)
+      );
+      allow list: if isSignedIn() && (
+        existing().actorUid == request.auth.uid ||
+        'client' in existing().targetRoles ||
+        isAdmin() ||
+        isActiveManager() ||
+        isActiveAgent()
+      );
+      allow create: if isSignedIn() && isNotBanned() && isValidId(notificationId) && isValidNotification(incoming())
+        && incoming().actorUid == request.auth.uid
+        && (
+          (incoming().type == 'new_booking' && incoming().targetRoles.hasOnly(['manager', 'admin', 'agent']))
+          || (incoming().type == 'new_registration' && incoming().targetRoles.hasOnly(['manager', 'admin']))
+          || (incoming().type == 'agent_assigned' && (isAdmin() || isActiveManager()) && incoming().targetRoles.hasOnly(['agent', 'manager', 'admin']))
+          || (incoming().type == 'promo_approved' && isAdmin() && incoming().targetRoles.hasOnly(['client', 'agent', 'manager', 'admin']))
+        );
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+  }
+}

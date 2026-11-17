@@ -1,0 +1,148 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Profil utilisateur Shine-x-Sanitize Alp Group (Client, Agent, Entreprise/Gérant, Administrateur)",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "minLength": 3, "maxLength": 160 },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "photoURL": { "type": "string", "maxLength": 500 },
+        "role": { "type": "string", "enum": ["client", "agent", "manager", "admin"] },
+        "accountStatus": { "type": "string", "enum": ["active", "pending", "rejected", "banned"] },
+        "phone": { "type": "string", "minLength": 8, "maxLength": 40 },
+        "acceptedTerms": { "type": "boolean" },
+        "acceptedTermsAt": { "type": "string", "maxLength": 64 },
+        "companyName": { "type": "string", "maxLength": 120 },
+        "companyDescription": { "type": "string", "maxLength": 600 },
+        "commune": { "type": "string", "maxLength": 120 },
+        "banReason": { "type": "string", "maxLength": 300 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["uid", "email", "displayName", "role", "accountStatus", "phone", "acceptedTerms", "acceptedTermsAt", "createdAt", "updatedAt"]
+    },
+    "ServiceCatalogItem": {
+      "title": "ServiceCatalogItem",
+      "description": "Prestation de nettoyage proposée sur l'écran d'accueil avec tarif de base modifiable par le gérant",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 2, "maxLength": 140 },
+        "category": { "type": "string", "enum": ["Mobilier", "Professionnel", "Literie", "Sol", "Véhicules", "BTP"] },
+        "vehicleType": { "type": "string", "enum": ["4_wheels", "moto", "velo"] },
+        "basePrice": { "type": "number" },
+        "duration": { "type": "string", "maxLength": 40 },
+        "description": { "type": "string", "maxLength": 600 },
+        "image": { "type": "string", "maxLength": 300 },
+        "updatedBy": { "type": "string", "maxLength": 120 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "name", "category", "basePrice", "duration", "description", "image", "updatedAt"]
+    },
+    "Booking": {
+      "title": "Booking",
+      "description": "Commande de prestation avec suivi GPS multi-utilisateurs, négociation tarifaire et diagnostic photo",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "serviceId": { "type": "string", "maxLength": 64 },
+        "serviceName": { "type": "string", "minLength": 2, "maxLength": 180 },
+        "serviceCategory": { "type": "string", "maxLength": 40 },
+        "vehicleType": { "type": "string", "enum": ["4_wheels", "moto", "velo"] },
+        "clientName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "clientPhone": { "type": "string", "minLength": 4, "maxLength": 40 },
+        "commune": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "address": { "type": "string", "minLength": 2, "maxLength": 240 },
+        "clientGpsActive": { "type": "boolean" },
+        "gpsActive": { "type": "boolean" },
+        "clientOfferPrice": { "type": "number" },
+        "managerCounterPrice": { "type": "number" },
+        "finalPrice": { "type": "number" },
+        "status": {
+          "type": "string",
+          "enum": ["pending_negotiation", "counter_offered", "confirmed", "in_transit", "in_progress", "completed", "cancelled"]
+        },
+        "paymentMethod": { "type": "string", "enum": ["Airtel Money", "Moov Money", "Espèces", "Carte bancaire"] },
+        "rating": { "type": "number" },
+        "review": { "type": "string", "maxLength": 800 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "serviceName",
+        "serviceCategory",
+        "clientName",
+        "clientPhone",
+        "commune",
+        "address",
+        "clientOfferPrice",
+        "finalPrice",
+        "status",
+        "paymentMethod",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Promotion": {
+      "title": "Promotion",
+      "description": "Annonce promotionnelle soumise par un gérant et validée par l'administrateur",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "minLength": 3, "maxLength": 120 },
+        "description": { "type": "string", "minLength": 5, "maxLength": 500 },
+        "discountLabel": { "type": "string", "minLength": 2, "maxLength": 40 },
+        "serviceCategory": { "type": "string", "maxLength": 60 },
+        "companyName": { "type": "string", "maxLength": 120 },
+        "validUntil": { "type": "string", "maxLength": 40 },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "createdByUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "title", "description", "discountLabel", "companyName", "status", "createdByUid", "createdAt"]
+    },
+    "AppNotification": {
+      "title": "AppNotification",
+      "description": "Notification temps réel ciblée par rôle (nouvelle commande, affectation agent, inscription, promotion validée)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "type": { "type": "string", "enum": ["new_booking", "agent_assigned", "new_registration", "promo_approved"] },
+        "title": { "type": "string", "minLength": 2, "maxLength": 140 },
+        "body": { "type": "string", "minLength": 2, "maxLength": 400 },
+        "relatedId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "relatedTab": { "type": "string", "enum": ["home", "services", "mes_reservations", "suivi_commande", "agent_space", "admin"] },
+        "actorUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "type", "title", "body", "targetRoles", "relatedId", "actorUid", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Comptes utilisateurs authentifiés (Client, Agent, Entreprise/Gérant, Admin) et statuts de validation"
+    },
+    "/services/{serviceId}": {
+      "schema": { "$ref": "#/entities/ServiceCatalogItem" },
+      "description": "Catalogue des prestations et tarifs de base gérés en temps réel par les gérants"
+    },
+    "/bookings/{bookingId}": {
+      "schema": { "$ref": "#/entities/Booking" },
+      "description": "Réservations, négociations tarifaires, affectations d'agents et positions GPS client/agent synchronisées"
+    },
+    "/promotions/{promoId}": {
+      "schema": { "$ref": "#/entities/Promotion" },
+      "description": "Annonces promotionnelles validées par l'administrateur et diffusées aux clients"
+    },
+    "/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/AppNotification" },
+      "description": "Alertes temps réel multi-rôles : commandes clients, inscriptions, affectations agents et promotions validées"
+    }
+  }
+}

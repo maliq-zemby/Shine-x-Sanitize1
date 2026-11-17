@@ -1,0 +1,10 @@
+{
+  "name": "Shine-x-Sanitize Alp Group",
+  "description": "Plateforme mobile et web Shine-x-Sanitize Alp Group de nettoyage professionnel, après travaux BTP et Véhicules & Mobilité à Libreville, Gabon.",
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
