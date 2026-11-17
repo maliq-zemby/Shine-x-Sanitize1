@@ -1,4 +1,4 @@
-import { initializeApp } from 'firebase/app';
+import { initializeApp, type FirebaseOptions } from 'firebase/app';
 import {
   browserLocalPersistence,
   getAuth,
@@ -7,21 +7,25 @@ import {
   setPersistence,
 } from 'firebase/auth';
 import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
-const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID
+
+const firebaseConfig: FirebaseOptions = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyCB4t-bhTi0pd-1vpfJ0uYOiMfAyLGFsXc',
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'shinexsanitize2.firebaseapp.com',
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'shinexsanitize2',
+  storageBucket:
+    import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'shinexsanitize2.firebasestorage.app',
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '710885153983',
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || '1:710885153983:web:1a68b273869b1f18127a0a',
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || 'G-C22H4T9GVY',
 };
+
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
-export const firebaseProjectId = firebaseConfig.projectId;
-export const firebaseAuthDomain = firebaseConfig.authDomain;
+export const firebaseProjectId = firebaseConfig.projectId ?? 'shinexsanitize2';
+export const firebaseAuthDomain = firebaseConfig.authDomain ?? 'shinexsanitize2.firebaseapp.com';
 
 export function formatGoogleAuthError(err: unknown): string {
   const code = (err as { code?: string })?.code || '';
