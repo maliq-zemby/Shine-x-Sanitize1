@@ -4,7 +4,12 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
+import {
+  getRedirectResult,
+  onAuthStateChanged,
+  signOut,
+  User as FirebaseUser,
+} from 'firebase/auth';
 import {
   collection,
   deleteDoc,
@@ -303,9 +308,11 @@ export default function App() {
     let unsub: (() => void) | undefined;
     let cancelled = false;
 
-    authPersistenceReady.finally(() => {
-      if (cancelled) return;
-      unsub = onAuthStateChanged(auth, async (fbUser) => {
+    authPersistenceReady
+      .then(() => getRedirectResult(auth).catch(() => null))
+      .finally(() => {
+        if (cancelled) return;
+        unsub = onAuthStateChanged(auth, async (fbUser) => {
         setFirebaseUser(fbUser);
         setBookings([]);
         setUsers([]);

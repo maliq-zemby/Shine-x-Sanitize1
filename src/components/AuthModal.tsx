@@ -4,6 +4,7 @@ import {
   sendEmailVerification,
   signInWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
   User as FirebaseUser,
 } from 'firebase/auth';
 import {
@@ -25,7 +26,12 @@ import {
   APP_OFFICIAL_NAME,
   BRAND_LOGO_URL,
 } from '../data/mockData';
-import { auth, authPersistenceReady, googleProvider } from '../firebase';
+import {
+  auth,
+  authPersistenceReady,
+  firebaseProjectId,
+  googleProvider,
+} from '../firebase';
 import { Role, UserProfile } from '../types';
 
 interface AuthModalProps {
@@ -104,11 +110,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       if (code === 'auth/unauthorized-domain') {
         const host = typeof window !== 'undefined' ? window.location.hostname : 'shinexsanitize1.netlify.app';
         setError(
-          `Domaine non autorisé (${host}). Ajoutez « ${host} » dans Firebase Console → Authentication → Settings → Authorized domains.`
+          `Domaine non autorisé (${host}) dans le projet Firebase « ${firebaseProjectId} ». Ajoutez « ${host} » dans Firebase Console (${firebaseProjectId}) → Authentication → Settings → Authorized domains.`
         );
       } else if (code === 'auth/popup-blocked') {
         setError(
-          "La fenêtre Google a été bloquée par votre navigateur. Autorisez les fenêtres pop-up pour ce site puis réessayez."
+          "La fenêtre pop-up Google a été bloquée par votre navigateur. Autorisez les pop-ups ou utilisez le bouton « Connexion par redirection » ci-dessous."
         );
       } else {
         setError(
@@ -118,6 +124,31 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         );
       }
     } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleRedirect = async () => {
+    setError('');
+    setInfoNotice('');
+    setLoading(true);
+    try {
+      await authPersistenceReady;
+      await signInWithRedirect(auth, googleProvider);
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code || '';
+      if (code === 'auth/unauthorized-domain') {
+        const host = typeof window !== 'undefined' ? window.location.hostname : 'shinexsanitize1.netlify.app';
+        setError(
+          `Domaine non autorisé (${host}) dans le projet Firebase « ${firebaseProjectId} ». Ajoutez « ${host} » dans Firebase Console (${firebaseProjectId}) → Authentication → Settings → Authorized domains.`
+        );
+      } else {
+        setError(
+          err instanceof Error
+            ? err.message
+            : 'Impossible de lancer la redirection Google.'
+        );
+      }
       setLoading(false);
     }
   };
@@ -374,6 +405,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     />
                   </svg>
                   <span>{loading ? 'Connexion en cours...' : 'Continuer avec Google'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={handleGoogleRedirect}
+                  className="w-full py-2.5 min-h-[42px] bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition-colors disabled:opacity-60"
+                >
+                  Pop-up bloqué sur mobile ? Connexion par redirection Google
                 </button>
               </div>
             ) : (
