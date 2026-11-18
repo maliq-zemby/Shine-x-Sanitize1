@@ -6,24 +6,47 @@ import {
   setPersistence,
 } from 'firebase/auth';
 import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
+import appletConfig from '../firebase-applet-config.json';
 import { ADMIN_BOOTSTRAP_DIGEST } from './data/mockData';
 
-const firebaseConfig: FirebaseOptions = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyCB4t-bhTi0pd-1vpfJ0uYOiMfAyLGFsXc',
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'shinexsanitize2.firebaseapp.com',
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'shinexsanitize2',
-  storageBucket:
-    import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'shinexsanitize2.firebasestorage.app',
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '710885153983',
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || '1:710885153983:web:1a68b273869b1f18127a0a',
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || 'G-C22H4T9GVY',
-};
+// Source of truth: firebase-applet-config.json (Firebase project created by AI Studio).
+// Optional VITE_FIREBASE_* variables can replace it, but only as a complete set
+// (at least API key + project ID) so a key from one project is never mixed with
+// the identifiers of another one.
+const env = import.meta.env;
+const useEnvConfig = Boolean(env.VITE_FIREBASE_API_KEY && env.VITE_FIREBASE_PROJECT_ID);
+
+const firebaseConfig: FirebaseOptions = useEnvConfig
+  ? {
+      apiKey: env.VITE_FIREBASE_API_KEY,
+      authDomain:
+        env.VITE_FIREBASE_AUTH_DOMAIN || `${env.VITE_FIREBASE_PROJECT_ID}.firebaseapp.com`,
+      projectId: env.VITE_FIREBASE_PROJECT_ID,
+      storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || undefined,
+      messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || undefined,
+      appId: env.VITE_FIREBASE_APP_ID || undefined,
+      measurementId: env.VITE_FIREBASE_MEASUREMENT_ID || undefined,
+    }
+  : {
+      apiKey: appletConfig.apiKey,
+      authDomain: appletConfig.authDomain,
+      projectId: appletConfig.projectId,
+      storageBucket: appletConfig.storageBucket,
+      messagingSenderId: appletConfig.messagingSenderId,
+      appId: appletConfig.appId,
+      measurementId: appletConfig.measurementId || undefined,
+    };
+
+// The AI Studio project stores its data in a named Firestore database, not "(default)".
+const firestoreDatabaseId = useEnvConfig
+  ? env.VITE_FIREBASE_DATABASE_ID || '(default)'
+  : appletConfig.firestoreDatabaseId || '(default)';
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app);
+export const db = getFirestore(app, firestoreDatabaseId);
 export const auth = getAuth(app);
-export const firebaseProjectId = firebaseConfig.projectId ?? 'shinexsanitize2';
-export const firebaseAuthDomain = firebaseConfig.authDomain ?? 'shinexsanitize2.firebaseapp.com';
+export const firebaseProjectId = firebaseConfig.projectId ?? appletConfig.projectId;
+export const firebaseAuthDomain = firebaseConfig.authDomain ?? appletConfig.authDomain;
 
 export function normalizeNameSlug(value: string): string {
   return value
