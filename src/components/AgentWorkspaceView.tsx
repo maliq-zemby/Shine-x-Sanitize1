@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Camera,
   CheckCircle2,
@@ -10,16 +10,31 @@ import {
   Square,
   Upload,
 } from 'lucide-react';
-import { Booking } from '../types';
+import { DEFAULT_GPS_POSITION } from '../data/quartiers';
+import { Booking, GpsPoint } from '../types';
+import {
+  HIGH_ACCURACY_GEO_OPTIONS,
+  reverseGeocodeNeighborhood,
+  useReverseGeocodedNeighborhood,
+} from '../utils/geocoding';
 import { LiveGpsMap } from './LiveGpsMap';
 
 interface AgentWorkspaceViewProps {
   bookings: Booking[];
   agentName: string;
-  onToggleGps: (bookingId: string) => void;
+  onToggleGps: (bookingId: string, initialPoint?: GpsPoint) => void;
+  onUpdateAgentGps: (bookingId: string, point: GpsPoint) => void;
   onStartPlacement: (bookingId: string, beforePhotoUrl?: string) => void;
-  onFinishPlacement: (bookingId: string, afterPhotoUrl?: string) => void;
+  onFinishPlacement: (bookingId: string, afterPhotoUrl?: string, beforePhotoUrl?: string) => void;
 }
+
+const NeighborhoodLabel: React.FC<{ coords?: GpsPoint | null; fallback?: string }> = ({
+  coords,
+  fallback,
+}) => {
+  const name = useReverseGeocodedNeighborhood(coords);
+  return <span>{name || fallback || 'Résolution du quartier...'}</span>;
+};
 
 function compressImageFile(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -52,6 +67,7 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
   bookings,
   agentName,
   onToggleGps,
+  onUpdateAgentGps,
   onStartPlacement,
   onFinishPlacement,
 }) => {
@@ -72,6 +88,174 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
   const [beforeDrafts, setBeforeDrafts] = useState<Record<string, string>>({});
   const [afterDrafts, setAfterDrafts] = useState<Record<string, string>>({});
   const [photoErrors, setPhotoErrors] = useState<Record<string, string>>({});
+
+  // Suivi GPS terrain haute précision (position par défaut : Amissa Chantal, Akanda)
+  const [selfPosition, setSelfPosition] = useState<GpsPoint | null>(DEFAULT_GPS_POSITION);
+  const [selfGpsActive, setSelfGpsActive] = useState(false);
+  const [selfGpsLoading, setSelfGpsLoading] = useState(false);
+  const [selfGpsError, setSelfGpsError] = useState('');
+  const watchIdRef = useRef<number | null>(null);
+  const lastSyncRef = useRef<{ time: number; lat: number; lng: number }>({
+    time: 0,
+    lat: 0,
+    lng: 0,
+  });
+
+  const activeGpsMissionIds = agentMissions
+    .filter((m) => m.gpsActive && m.status !== 'completed')
+    .map((m) => m.id);
+  const activeGpsMissionIdsKey = activeGpsMissionIds.join(',');
+
+  const startLiveWatch = () => {
+    if (typeof navigator === 'undefined' || !('geolocation' in navigator)) {
+      setSelfGpsError('La géolocalisation n’est pas prise en charge par ce navigateur.');
+      return;
+    }
+
+    if (watchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
+
+    setSelfGpsError('');
+    setSelfGpsLoading(true);
+    setSelfGpsActive(true);
+
+    const onGeoSuccess = async (pos: GeolocationPosition) => {
+      const { latitude, longitude, accuracy } = pos.coords;
+      const neighborhood = await reverseGeocodeNeighborhood(latitude, longitude);
+      const point: GpsPoint = {
+        lat: latitude,
+        lng: longitude,
+        neighborhood,
+        accuracy: Math.round(accuracy),
+        updatedAt: new Date().toISOString(),
+      };
+      setSelfPosition(point);
+      setSelfGpsLoading(false);
+      setSelfGpsError('');
+
+      // Synchronise vers Firestore pour toutes les missions actives avec GPS activé
+      const now = Date.now();
+      const movedEnough =
+        Math.hypot(latitude - lastSyncRef.current.lat, longitude - lastSyncRef.current.lng) >
+        0.0002;
+      if (
+        activeGpsMissionIds.length > 0 &&
+        (now - lastSyncRef.current.time > 8000 || movedEnough)
+      ) {
+        lastSyncRef.current = { time: now, lat: latitude, lng: longitude };
+        activeGpsMissionIds.forEach((id) => onUpdateAgentGps(id, point));
+      }
+    };
+
+    const onGeoError = (err: GeolocationPositionError) => {
+      setSelfGpsLoading(false);
+      if (err.code === err.PERMISSION_DENIED) {
+        setSelfGpsError(
+          'Accès GPS refusé par le navigateur. Autorisez la localisation pour afficher votre quartier.'
+        );
+        setSelfGpsActive(false);
+      } else {
+        setSelfGpsError('Acquisition GPS haute précision en cours...');
+      }
+    };
+
+    navigator.geolocation.getCurrentPosition(
+      onGeoSuccess,
+      onGeoError,
+      HIGH_ACCURACY_GEO_OPTIONS
+    );
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      onGeoSuccess,
+      onGeoError,
+      HIGH_ACCURACY_GEO_OPTIONS
+    );
+  };
+
+  const stopLiveWatch = () => {
+    if (watchIdRef.current !== null && typeof navigator !== 'undefined' && 'geolocation' in navigator) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
+    setSelfGpsActive(false);
+    setSelfGpsLoading(false);
+  };
+
+  const handleToggleSelfGps = () => {
+    if (selfGpsActive) {
+      stopLiveWatch();
+    } else {
+      startLiveWatch();
+    }
+  };
+
+  // Active automatiquement la localisation si la permission est déjà accordée ou si une mission a le GPS actif
+  useEffect(() => {
+    if (activeGpsMissionIds.length > 0 && !selfGpsActive) {
+      startLiveWatch();
+    } else if (
+      typeof navigator !== 'undefined' &&
+      'permissions' in navigator &&
+      typeof navigator.permissions.query === 'function'
+    ) {
+      navigator.permissions
+        .query({ name: 'geolocation' })
+        .then((res) => {
+          if (res.state === 'granted' && !selfGpsActive) {
+            startLiveWatch();
+          }
+        })
+        .catch(() => {});
+    }
+
+    return () => {
+      if (watchIdRef.current !== null && typeof navigator !== 'undefined' && 'geolocation' in navigator) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeGpsMissionIdsKey]);
+
+  const handleToggleMissionGps = (mission: Booking) => {
+    setSelectedMissionId(mission.id);
+    if (!mission.gpsActive) {
+      if (selfPosition) {
+        onToggleGps(mission.id, selfPosition);
+        if (!selfGpsActive) startLiveWatch();
+        return;
+      }
+
+      if (typeof navigator !== 'undefined' && 'geolocation' in navigator) {
+        setSelfGpsLoading(true);
+        navigator.geolocation.getCurrentPosition(
+          async (pos) => {
+            const { latitude, longitude, accuracy } = pos.coords;
+            const neighborhood = await reverseGeocodeNeighborhood(latitude, longitude);
+            const pt: GpsPoint = {
+              lat: latitude,
+              lng: longitude,
+              neighborhood,
+              accuracy: Math.round(accuracy),
+              updatedAt: new Date().toISOString(),
+            };
+            setSelfPosition(pt);
+            setSelfGpsLoading(false);
+            onToggleGps(mission.id, pt);
+            startLiveWatch();
+          },
+          () => {
+            setSelfGpsLoading(false);
+            onToggleGps(mission.id, selfPosition || DEFAULT_GPS_POSITION);
+          },
+          HIGH_ACCURACY_GEO_OPTIONS
+        );
+        return;
+      }
+    }
+    onToggleGps(mission.id, selfPosition || DEFAULT_GPS_POSITION);
+  };
 
   const handleFileChange = async (
     bookingId: string,
@@ -107,13 +291,24 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
       }));
       return;
     }
-    onStartPlacement(booking.id, beforeDrafts[booking.id]);
+    onStartPlacement(booking.id, chosenBefore);
   };
 
   const handleFinishWithPhoto = (booking: Booking) => {
+    const chosenBefore =
+      beforeDrafts[booking.id] ||
+      booking.beforePhotos[booking.beforePhotos.length - 1];
     const chosenAfter =
       afterDrafts[booking.id] ||
       booking.afterPhotos[booking.afterPhotos.length - 1];
+    if (!chosenBefore) {
+      setPhotoErrors((prev) => ({
+        ...prev,
+        [booking.id]:
+          "Veuillez joindre la photo AVANT intervention avant de valider la fin de prestation.",
+      }));
+      return;
+    }
     if (!chosenAfter) {
       setPhotoErrors((prev) => ({
         ...prev,
@@ -122,7 +317,7 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
       }));
       return;
     }
-    onFinishPlacement(booking.id, chosenAfter);
+    onFinishPlacement(booking.id, chosenAfter, beforeDrafts[booking.id] || chosenBefore);
   };
 
   return (
@@ -130,15 +325,73 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Espace Agent · {agentName}</h1>
         <p className="text-xs text-slate-600 mt-1">
-          Visualisez les positions GPS partagées par vos clients, activez votre GPS, marquez le début du placement avec photo avant puis la fin avec photo après.
+          Visualisez votre quartier réel et vos positions GPS en direct (haute précision), marquez le début du placement avec photo avant puis validez la fin avec photo après.
         </p>
+      </div>
+
+      {/* Bandeau Position & Quartier en direct (toujours accessible, même sans mission assignée) */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="space-y-1">
+          <div className="text-xs font-bold text-slate-900 flex items-center gap-2">
+            <LocateFixed className="w-4 h-4 text-emerald-700 shrink-0" />
+            <span>Ma position &amp; Quartier actuel (Haute précision GPS)</span>
+          </div>
+          {selfPosition ? (
+            <div className="text-xs text-slate-700 flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span className="inline-flex items-center gap-1 font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-lg">
+                <MapPin className="w-3.5 h-3.5" />
+                <NeighborhoodLabel coords={selfPosition} fallback="Amissa Chantal, Akanda" />
+              </span>
+              <span className="font-mono text-[11px] text-slate-500 tabular-nums">
+                {selfPosition.lat.toFixed(5)}, {selfPosition.lng.toFixed(5)}
+                {selfPosition.accuracy !== undefined
+                  ? ` · ±${selfPosition.accuracy} m`
+                  : ' · Secteur par défaut (Akanda)'}
+              </span>
+              {selfGpsError && (
+                <span className="text-[11px] text-amber-700 font-medium">{selfGpsError}</span>
+              )}
+            </div>
+          ) : (
+            <p className="text-xs text-slate-500">
+              {selfGpsError ||
+                'Activez votre GPS haute précision pour afficher votre quartier réel sur la carte.'}
+            </p>
+          )}
+        </div>
+
+        <button
+          type="button"
+          onClick={handleToggleSelfGps}
+          disabled={selfGpsLoading}
+          className={`px-4 py-2.5 min-h-[44px] text-xs font-semibold rounded-xl transition-colors inline-flex items-center justify-center gap-2 shrink-0 ${
+            selfGpsActive
+              ? 'bg-emerald-700 hover:bg-emerald-800 text-white'
+              : 'bg-slate-900 hover:bg-emerald-700 text-white'
+          }`}
+        >
+          <Navigation className="w-3.5 h-3.5" />
+          <span>
+            {selfGpsLoading
+              ? 'Localisation GPS...'
+              : selfGpsActive
+              ? 'Mon GPS Live Actif (Couper)'
+              : 'Activer mon GPS en direct'}
+          </span>
+        </button>
       </div>
 
       <LiveGpsMap
         bookings={agentMissions}
         selectedBookingId={selectedMissionId}
         onSelectBooking={setSelectedMissionId}
-        title="Position GPS Agent & Position GPS Clients en direct"
+        title="Position GPS Agent & Quartiers en direct"
+        selfPosition={selfPosition}
+        selfLabel={agentName}
+        selfGpsActive={selfGpsActive}
+        selfGpsLoading={selfGpsLoading}
+        selfGpsError={selfGpsError}
+        onToggleSelfGps={handleToggleSelfGps}
       />
 
       <div className="space-y-4">
@@ -148,7 +401,7 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
               Aucune mission affectée pour le moment
             </div>
             <p className="text-xs text-slate-500">
-              Dès que le gérant valide une commande et vous l&apos;assigne, elle apparaîtra ici avec le suivi GPS et les photos avant/après.
+              Votre position GPS et votre quartier actuel restent consultables sur la carte ci-dessus. Dès qu&apos;une commande vous est assignée, elle s&apos;affichera ici.
             </p>
           </div>
         )}
@@ -179,13 +432,18 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
                   <div className="text-xs text-slate-600 flex flex-wrap items-center gap-2">
                     <span className="inline-flex items-center gap-1">
                       <MapPin className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
-                      {mission.commune} · {mission.address}
+                      <NeighborhoodLabel coords={mission.clientCoords} fallback={mission.commune} /> ·{' '}
+                      {mission.address}
                     </span>
                     {mission.clientGpsActive && (
                       <span className="inline-flex items-center gap-1 text-amber-800 font-semibold">
                         <LocateFixed className="w-3.5 h-3.5" />
-                        GPS Client en direct ({mission.clientCoords.lat.toFixed(4)},{' '}
-                        {mission.clientCoords.lng.toFixed(4)})
+                        GPS Client en direct (
+                        <NeighborhoodLabel
+                          coords={mission.clientCoords}
+                          fallback={mission.commune}
+                        />
+                        )
                       </span>
                     )}
                   </div>
@@ -224,22 +482,29 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
                 <div className="space-y-0.5">
                   <div className="text-xs font-bold text-slate-900 flex items-center gap-2">
                     <Navigation className="w-4 h-4 text-emerald-700" />
-                    <span>1. Géolocalisation GPS Agent</span>
+                    <span>1. Géolocalisation GPS Agent (Haute précision)</span>
                   </div>
                   <p className="text-[11px] text-slate-600">
-                    {mission.gpsActive
-                      ? 'Votre position est visible en temps réel par le client, le gérant et l’administrateur.'
-                      : 'Activez votre GPS au départ vers le client.'}
+                    {mission.gpsActive ? (
+                      <>
+                        Position active — Quartier détecté :{' '}
+                        <strong className="text-emerald-800">
+                          <NeighborhoodLabel
+                            coords={mission.agentGps || selfPosition}
+                            fallback="Localisation..."
+                          />
+                        </strong>
+                      </>
+                    ) : (
+                      'Activez votre GPS au départ vers le client.'
+                    )}
                   </p>
                 </div>
 
                 <button
                   type="button"
                   disabled={mission.status === 'completed'}
-                  onClick={() => {
-                    setSelectedMissionId(mission.id);
-                    onToggleGps(mission.id);
-                  }}
+                  onClick={() => handleToggleMissionGps(mission)}
                   className={`px-4 py-2.5 min-h-[44px] text-xs font-semibold rounded-xl transition-colors shrink-0 disabled:opacity-50 ${
                     mission.gpsActive
                       ? 'bg-emerald-700 text-white hover:bg-emerald-800'
@@ -254,7 +519,7 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
                 <div className="border border-slate-200 rounded-xl p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-slate-900">
-                      2. Début du placement & Image Avant
+                      2. Début du placement &amp; Image Avant
                     </span>
                     {mission.startedAt && (
                       <span className="text-[11px] font-mono text-emerald-700">
@@ -311,7 +576,7 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
                 <div className="border border-slate-200 rounded-xl p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-slate-900">
-                      3. Fin de mission & Image Après
+                      3. Fin de mission &amp; Image Après
                     </span>
                     {mission.completedAt && (
                       <span className="text-[11px] font-mono text-emerald-700">
@@ -356,7 +621,7 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
                           ...prev,
                           [mission.id]:
                             mission.beforePhotos[0] ||
-                            '/src/assets/images/cleaning_hero_librevile_1794914545784.jpg',
+                            '/src/assets/images/hero_shine_alp_1795029308068.jpg',
                         }))
                       }
                       className="px-3 py-2.5 min-h-[44px] bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-medium rounded-xl"

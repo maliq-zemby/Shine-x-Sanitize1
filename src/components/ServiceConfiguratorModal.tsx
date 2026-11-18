@@ -1,12 +1,20 @@
 import React, { useState } from 'react';
-import { Bike, Car, Check, X } from 'lucide-react';
+import { Bike, Car, Check, LocateFixed, X } from 'lucide-react';
 import {
   COMMUNES,
   VEHICLE_BRANDS,
   VEHICLE_SEAT_OPTIONS,
   getOptionPrice,
 } from '../data/mockData';
-import { Booking, PaymentMethod, ServiceItem } from '../types';
+import {
+  CommuneGrandLibreville,
+  DEFAULT_QUARTIER,
+  QUARTIERS_BY_COMMUNE,
+  QUARTIERS_GRAND_LIBREVILLE,
+  matchLocalQuartier,
+} from '../data/quartiers';
+import { Booking, GpsPoint, PaymentMethod, ServiceItem } from '../types';
+import { HIGH_ACCURACY_GEO_OPTIONS } from '../utils/geocoding';
 
 interface ServiceConfiguratorModalProps {
   service: ServiceItem;
@@ -29,6 +37,9 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
   const isTwoWheelVehicle = service.vehicleType === 'moto' || service.vehicleType === 'velo';
 
   const [commune, setCommune] = useState(COMMUNES[0].name);
+  const [selectedQuartierId, setSelectedQuartierId] = useState(DEFAULT_QUARTIER.id);
+  const [detectedGps, setDetectedGps] = useState<GpsPoint | null>(null);
+  const [detectingGps, setDetectingGps] = useState(false);
   const [address, setAddress] = useState('');
   const [clientName, setClientName] = useState(defaultClientName);
   const [clientPhone, setClientPhone] = useState(defaultClientPhone);
@@ -80,11 +91,60 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
     );
   };
 
+  const activeCommuneObj = COMMUNES.find((c) => c.name === commune) || COMMUNES[0];
+  const communeQuartiers = QUARTIERS_BY_COMMUNE[activeCommuneObj.id] || QUARTIERS_BY_COMMUNE.Akanda;
+  const selectedQuartier =
+    QUARTIERS_GRAND_LIBREVILLE.find((q) => q.id === selectedQuartierId) ||
+    communeQuartiers[0] ||
+    DEFAULT_QUARTIER;
+
+  const handleCommuneChange = (nextCommuneName: string) => {
+    setCommune(nextCommuneName);
+    setDetectedGps(null);
+    const nextCommuneObj = COMMUNES.find((c) => c.name === nextCommuneName) || COMMUNES[0];
+    const firstQuartier = QUARTIERS_BY_COMMUNE[nextCommuneObj.id]?.[0] || DEFAULT_QUARTIER;
+    setSelectedQuartierId(firstQuartier.id);
+  };
+
+  const handleDetectMyQuartier = () => {
+    if (typeof navigator === 'undefined' || !('geolocation' in navigator)) return;
+    setDetectingGps(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const { latitude, longitude, accuracy } = pos.coords;
+        const matched = matchLocalQuartier(latitude, longitude);
+        const targetCommune =
+          COMMUNES.find((c) => c.id === matched.quartier.commune) || COMMUNES[0];
+        setCommune(targetCommune.name);
+        setSelectedQuartierId(matched.quartier.id);
+        setDetectedGps({
+          lat: latitude,
+          lng: longitude,
+          neighborhood: matched.label,
+          accuracy: Math.round(accuracy),
+          updatedAt: new Date().toISOString(),
+        });
+        setDetectingGps(false);
+      },
+      () => {
+        setCommune(COMMUNES[0].name);
+        setSelectedQuartierId(DEFAULT_QUARTIER.id);
+        setDetectedGps({
+          lat: DEFAULT_QUARTIER.lat,
+          lng: DEFAULT_QUARTIER.lng,
+          neighborhood: DEFAULT_QUARTIER.label,
+          updatedAt: new Date().toISOString(),
+        });
+        setDetectingGps(false);
+      },
+      HIGH_ACCURACY_GEO_OPTIONS
+    );
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const resolvedBrand =
       vehicleBrand === 'Autre marque' ? customBrand.trim() || 'Autre' : vehicleBrand;
-    const communeObj = COMMUNES.find((c) => c.name === commune) || COMMUNES[0];
 
     let fullServiceName = `${service.name} (${material})`;
     if (isFourWheelVehicle) {
@@ -102,6 +162,18 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
         : `${opt} (+${optPrice.toLocaleString()} XAF)`;
     });
 
+    const formattedAddress = address.trim()
+      ? `${selectedQuartier.name} — ${address.trim()}`
+      : selectedQuartier.label;
+
+    const clientCoords: GpsPoint = detectedGps
+      ? detectedGps
+      : {
+          lat: selectedQuartier.lat,
+          lng: selectedQuartier.lng,
+          neighborhood: selectedQuartier.label,
+        };
+
     const nowIso = new Date().toISOString();
     const newBooking: Booking = {
       id: `SHINE-${Math.floor(1000 + Math.random() * 9000)}`,
@@ -112,13 +184,10 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
       ...(service.vehicleType ? { vehicleType: service.vehicleType } : {}),
       clientName: clientName.trim() || defaultClientName,
       clientPhone: clientPhone.trim() || defaultClientPhone,
-      commune,
-      address,
-      clientCoords: {
-        lat: communeObj.coords.lat + (Math.random() - 0.5) * 0.015,
-        lng: communeObj.coords.lng + (Math.random() - 0.5) * 0.015,
-      },
-      clientGpsActive: false,
+      commune: selectedQuartier.commune as CommuneGrandLibreville,
+      address: formattedAddress,
+      clientCoords,
+      clientGpsActive: Boolean(detectedGps),
       details: {
         material,
         condition,
@@ -331,7 +400,7 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
               <select
                 id="cfg-commune"
                 value={commune}
-                onChange={(e) => setCommune(e.target.value)}
+                onChange={(e) => handleCommuneChange(e.target.value)}
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-700"
               >
                 {COMMUNES.map((c) => (
@@ -343,19 +412,51 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
             </div>
 
             <div className="space-y-1">
-              <label htmlFor="cfg-address" className="text-xs font-semibold text-slate-700">
-                Adresse précise / Quartier
-              </label>
-              <input
-                id="cfg-address"
-                type="text"
-                value={address}
-                onChange={(e) => setAddress(e.target.value)}
-                placeholder="Ex: Quartier Louis, Batterie IV, Ambowè..."
-                required
+              <div className="flex items-center justify-between gap-2">
+                <label htmlFor="cfg-quartier" className="text-xs font-semibold text-slate-700">
+                  Quartier exact *
+                </label>
+                <button
+                  type="button"
+                  onClick={handleDetectMyQuartier}
+                  disabled={detectingGps}
+                  className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-800 inline-flex items-center gap-1"
+                >
+                  <LocateFixed className="w-3 h-3" />
+                  <span>{detectingGps ? 'Détection...' : 'Détecter GPS'}</span>
+                </button>
+              </div>
+              <select
+                id="cfg-quartier"
+                value={selectedQuartier.id}
+                onChange={(e) => {
+                  setSelectedQuartierId(e.target.value);
+                  setDetectedGps(null);
+                }}
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-700"
-              />
+              >
+                {communeQuartiers.map((q) => (
+                  <option key={q.id} value={q.id}>
+                    {q.name}
+                  </option>
+                ))}
+              </select>
             </div>
+          </div>
+
+          <div className="space-y-1">
+            <label htmlFor="cfg-address" className="text-xs font-semibold text-slate-700">
+              Repère / Rue / Immeuble ({selectedQuartier.label})
+            </label>
+            <input
+              id="cfg-address"
+              type="text"
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+              placeholder={`Ex: Derrière le lycée / Carrefour / Villa n°... (${selectedQuartier.name})`}
+              required
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-700"
+            />
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

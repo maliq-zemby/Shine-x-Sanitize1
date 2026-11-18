@@ -44,7 +44,11 @@ import { AgentWorkspaceView } from './components/AgentWorkspaceView';
 import { AuthModal } from './components/AuthModal';
 import { ClientReservationsView } from './components/ClientReservationsView';
 import { ManagerOrdersView } from './components/ManagerOrdersView';
-import { LiveNotificationToast, NotificationBell } from './components/NotificationCenter';
+import {
+  isNotificationFresh,
+  LiveNotificationToast,
+  NotificationBell,
+} from './components/NotificationCenter';
 import { OfflineIndicator, PWAInstallButton } from './components/PWAInstallButton';
 import { ServiceConfiguratorModal } from './components/ServiceConfiguratorModal';
 import { VehicleMobilityModal } from './components/VehicleMobilityModal';
@@ -62,6 +66,7 @@ import {
   PROTOTYPE_PROMO_IDS,
   SERVICES,
 } from './data/mockData';
+import { DEFAULT_GPS_POSITION } from './data/quartiers';
 import {
   auth,
   authPersistenceReady,
@@ -74,6 +79,7 @@ import {
   ActiveTabId,
   AppNotification,
   Booking,
+  GpsPoint,
   NotificationType,
   Promotion,
   Role,
@@ -109,18 +115,29 @@ function getDashboardTabForRole(role: Role): ActiveTab {
 }
 
 const STORAGE_KEYS = {
-  services: 'sxs_alp_services_prod_v1',
+  services: 'sxs_alp_services_prod_v2',
 };
 
 const LEGACY_PROTOTYPE_KEYS = [
   'sxs_alp_services_v2',
   'sxs_alp_services_v3',
+  'sxs_alp_services_prod_v1',
   'sxs_alp_bookings_v2',
   'sxs_alp_promotions_v2',
   'sxs_alp_users_v2',
 ];
 
 const REMOVED_SERVICE_IDS = new Set(['srv-9']);
+const CANONICAL_SERVICE_IMAGE_BY_ID = new Map(SERVICES.map((s) => [s.id, s.image]));
+
+function normalizeServiceImages(items: ServiceItem[]): ServiceItem[] {
+  return items
+    .filter((s) => !REMOVED_SERVICE_IDS.has(s.id))
+    .map((s) => ({
+      ...s,
+      image: CANONICAL_SERVICE_IMAGE_BY_ID.get(s.id) || s.image,
+    }));
+}
 
 function loadLocal<T>(key: string, fallback: T): T {
   try {
@@ -143,7 +160,7 @@ export default function App() {
   const [serviceFilter, setServiceFilter] = useState<'all' | 'vehicles' | 'btp' | 'home'>('all');
 
   const [services, setServices] = useState<ServiceItem[]>(() =>
-    loadLocal(STORAGE_KEYS.services, SERVICES).filter((s) => !REMOVED_SERVICE_IDS.has(s.id))
+    normalizeServiceImages(loadLocal(STORAGE_KEYS.services, SERVICES))
   );
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [promotions, setPromotions] = useState<Promotion[]>([]);
@@ -201,6 +218,7 @@ export default function App() {
     body: string;
     targetRoles: Role[];
     targetAgentNames?: string[];
+    targetOwnerUid?: string;
     relatedId: string;
     relatedTab: ActiveTab;
     actorUid?: string;
@@ -217,6 +235,7 @@ export default function App() {
       ...(params.targetAgentNames && params.targetAgentNames.length > 0
         ? { targetAgentNames: params.targetAgentNames.slice(0, 10) }
         : {}),
+      ...(params.targetOwnerUid ? { targetOwnerUid: params.targetOwnerUid } : {}),
       relatedId: params.relatedId,
       relatedTab: params.relatedTab,
       actorUid: uid,
@@ -294,7 +313,7 @@ export default function App() {
         role: 'admin',
         accountStatus: 'active',
         phone: ADMIN_WHATSAPP_PHONE,
-        commune: 'Libreville Centre',
+        commune: 'Amissa Chantal, Akanda',
         acceptedTerms: true,
         acceptedTermsAt: now,
         createdAt: now,
@@ -351,13 +370,11 @@ export default function App() {
       collection(db, 'services'),
       (snapshot) => {
         if (!snapshot.empty) {
-          const remoteServices = snapshot.docs
-            .map((d) => d.data() as ServiceItem)
-            .filter((s) => !REMOVED_SERVICE_IDS.has(s.id));
+          const remoteServices = normalizeServiceImages(
+            snapshot.docs.map((d) => d.data() as ServiceItem)
+          );
           setServices((prev) => {
-            const map = new Map(
-              prev.filter((s) => !REMOVED_SERVICE_IDS.has(s.id)).map((s) => [s.id, s])
-            );
+            const map = new Map(normalizeServiceImages(prev).map((s) => [s.id, s]));
             remoteServices.forEach((rs) => map.set(rs.id, rs));
             return Array.from(map.values());
           });
@@ -471,7 +488,20 @@ export default function App() {
           .map((d) => d.data() as AppNotification)
           .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
 
+        // Nettoyage automatique en base des alertes expirées (> 24h ou avant minuit) par l'Admin ou le Gérant
+        if (userProfile.role === 'admin' || userProfile.role === 'manager') {
+          allItems.forEach((n) => {
+            if (!isNotificationFresh(n.createdAt)) {
+              deleteDoc(doc(db, 'notifications', n.id)).catch(() => {});
+            }
+          });
+        }
+
         const matchesUser = (n: AppNotification) => {
+          if (!isNotificationFresh(n.createdAt)) return false;
+          if (n.targetOwnerUid && userProfile.role === 'client' && n.targetOwnerUid !== firebaseUser.uid) {
+            return false;
+          }
           if (userProfile.role === 'agent' && n.targetAgentNames && n.targetAgentNames.length > 0) {
             return n.targetAgentNames.includes(userProfile.displayName);
           }
@@ -508,7 +538,14 @@ export default function App() {
       }
     );
 
-    return () => unsub();
+    const pruneInterval = setInterval(() => {
+      setNotifications((prev) => prev.filter((n) => isNotificationFresh(n.createdAt)));
+    }, 60000);
+
+    return () => {
+      unsub();
+      clearInterval(pruneInterval);
+    };
   }, [authReady, firebaseUser, userProfile]);
 
   useEffect(() => {
@@ -552,12 +589,12 @@ export default function App() {
     saveReadNotificationIds(userProfile.uid, allIds);
   };
 
-  // Simulated GPS movement for active in-transit agents
+  // Simulated GPS movement only when real hardware GPS has not locked an accuracy reading
   useEffect(() => {
     const interval = setInterval(() => {
       setBookings((prev) =>
         prev.map((b) => {
-          if (b.gpsActive && b.status === 'in_transit' && b.agentGps) {
+          if (b.gpsActive && b.status === 'in_transit' && b.agentGps && !b.agentGps.accuracy) {
             const newLat = b.agentGps.lat + (b.clientCoords.lat - b.agentGps.lat) * 0.08;
             const newLng = b.agentGps.lng + (b.clientCoords.lng - b.agentGps.lng) * 0.08;
             return {
@@ -739,7 +776,7 @@ export default function App() {
 
   const handleToggleClientGps = (
     bookingId: string,
-    coords?: { lat: number; lng: number }
+    coords?: GpsPoint
   ) => {
     const target = bookings.find((b) => b.id === bookingId);
     if (!target) return;
@@ -820,7 +857,7 @@ export default function App() {
     const target = bookings.find((b) => b.id === bookingId);
     persistBookingPatch(bookingId, {
       assignedAgents: agents,
-      agentGps: target?.agentGps || { lat: 0.391, lng: 9.452 },
+      agentGps: target?.agentGps || DEFAULT_GPS_POSITION,
     });
 
     if (agents.length > 0 && target) {
@@ -1038,14 +1075,20 @@ export default function App() {
   };
 
   // Agent Actions
-  const handleToggleGps = (bookingId: string) => {
+  const handleToggleGps = (bookingId: string, initialPoint?: GpsPoint) => {
     const target = bookings.find((b) => b.id === bookingId);
     if (!target) return;
     const nextGps = !target.gpsActive;
     persistBookingPatch(bookingId, {
       gpsActive: nextGps,
       status: nextGps && target.status === 'confirmed' ? 'in_transit' : target.status,
-      agentGps: target.agentGps || { lat: 0.389, lng: 9.451 },
+      agentGps: initialPoint || target.agentGps || DEFAULT_GPS_POSITION,
+    });
+  };
+
+  const handleUpdateAgentGps = (bookingId: string, point: GpsPoint) => {
+    persistBookingPatch(bookingId, {
+      agentGps: point,
     });
   };
 
@@ -1055,29 +1098,95 @@ export default function App() {
       hour: '2-digit',
       minute: '2-digit',
     });
+    const existingBefore = target?.beforePhotos || [];
+    const nextBefore =
+      beforePhotoUrl && !existingBefore.includes(beforePhotoUrl)
+        ? [...existingBefore, beforePhotoUrl].slice(-5)
+        : existingBefore;
     persistBookingPatch(bookingId, {
       status: 'in_progress',
       startedAt: `Aujourd'hui à ${nowLabel}`,
-      beforePhotos: beforePhotoUrl
-        ? [...(target?.beforePhotos || []), beforePhotoUrl]
-        : target?.beforePhotos || [],
+      beforePhotos: nextBefore,
     });
   };
 
-  const handleFinishPlacement = (bookingId: string, afterPhotoUrl?: string) => {
+  const handleFinishPlacement = async (
+    bookingId: string,
+    afterPhotoUrl?: string,
+    beforePhotoUrl?: string
+  ) => {
     const target = bookings.find((b) => b.id === bookingId);
     const nowLabel = new Date().toLocaleTimeString('fr-FR', {
       hour: '2-digit',
       minute: '2-digit',
     });
-    persistBookingPatch(bookingId, {
+    const existingBefore = target?.beforePhotos || [];
+    const nextBefore =
+      beforePhotoUrl && !existingBefore.includes(beforePhotoUrl)
+        ? [...existingBefore, beforePhotoUrl].slice(-5)
+        : existingBefore;
+    const existingAfter = target?.afterPhotos || [];
+    const nextAfter =
+      afterPhotoUrl && !existingAfter.includes(afterPhotoUrl)
+        ? [...existingAfter, afterPhotoUrl].slice(-5)
+        : existingAfter;
+
+    await persistBookingPatch(bookingId, {
       status: 'completed',
       gpsActive: false,
       completedAt: `Aujourd'hui à ${nowLabel}`,
-      afterPhotos: afterPhotoUrl
-        ? [...(target?.afterPhotos || []), afterPhotoUrl]
-        : target?.afterPhotos || [],
+      beforePhotos: nextBefore,
+      afterPhotos: nextAfter,
     });
+
+    if (target) {
+      const agentLabel =
+        userProfile?.displayName ||
+        (target.assignedAgents.length > 0 ? target.assignedAgents.join(', ') : "L'agent");
+
+      await publishNotification({
+        type: 'mission_completed',
+        title: `Photos reçues · Mission #${bookingId}`,
+        body: `${agentLabel} a validé la fin de prestation (${target.serviceName} · ${target.clientName}) et transmis les photos avant/après sur votre tableau de bord.`,
+        targetRoles: ['manager', 'admin'],
+        relatedId: bookingId,
+        relatedTab: 'suivi_commande',
+      });
+
+      await publishNotification({
+        type: 'client_thank_you',
+        title: `Merci pour votre confiance !`,
+        body: `Merci pour votre confiance, ${target.clientName} ! L'équipe Shine-x-Sanitize Alp Group vous remercie et espère vous revoir très bientôt.`,
+        targetRoles: ['client'],
+        targetOwnerUid: target.ownerUid,
+        relatedId: bookingId,
+        relatedTab: 'mes_reservations',
+      });
+    }
+  };
+
+  const handleArchiveBookingPhotos = async (bookingId: string) => {
+    const target = bookings.find((b) => b.id === bookingId);
+    const archivedAt = new Date().toISOString();
+
+    await persistBookingPatch(bookingId, {
+      beforePhotos: [],
+      afterPhotos: [],
+      photosArchivedAt: archivedAt,
+    });
+
+    if (target) {
+      const agentTargetList = target.assignedAgents.length > 0 ? target.assignedAgents : undefined;
+      await publishNotification({
+        type: 'agent_encouragement',
+        title: `Bravo pour la mission #${bookingId} !`,
+        body: `Excellent travail${agentTargetList ? ` ${agentTargetList.join(', ')}` : ''} ! Merci pour votre rigueur sur le terrain (${target.serviceName}), continuez ainsi !`,
+        targetRoles: ['agent'],
+        ...(agentTargetList ? { targetAgentNames: agentTargetList } : {}),
+        relatedId: bookingId,
+        relatedTab: 'agent_space',
+      });
+    }
   };
 
   // Unified catalog grouping: combine the 3 vehicle sub-services into one unified card
@@ -1095,9 +1204,10 @@ export default function App() {
   const showUnifiedVehicleCard = serviceFilter === 'all' || serviceFilter === 'vehicles';
   const approvedPromotions = promotions.filter((p) => p.status === 'approved');
 
-  const visibleNotifications = isActualAdmin
+  const visibleNotifications = (isActualAdmin
     ? notifications.filter((n) => n.targetRoles.includes(currentRole))
-    : notifications;
+    : notifications
+  ).filter((n) => isNotificationFresh(n.createdAt));
 
   if (!authReady) {
     return (
@@ -1397,7 +1507,7 @@ export default function App() {
             <section className="relative rounded-3xl overflow-hidden bg-slate-900 text-white shadow-xl">
               <div className="absolute inset-0">
                 <img
-                  src="/src/assets/images/cleaning_hero_librevile_1794914545784.jpg"
+                  src="/src/assets/images/hero_shine_alp_1795029308068.jpg"
                   alt="Équipe professionnelle Shine-x-Sanitize Alp Group à Libreville"
                   className="w-full h-full object-cover opacity-40"
                   referrerPolicy="no-referrer"
@@ -1677,7 +1787,7 @@ export default function App() {
                     <div>
                       <div className="h-48 overflow-hidden bg-slate-100">
                         <img
-                          src="/src/assets/images/car_cleaning_librevile_1794917339478.jpg"
+                          src="/src/assets/images/car_shine_alp_1795029311865.jpg"
                           alt="Véhicules et Mobilité Shine-x-Sanitize Alp Group"
                           className="w-full h-full object-cover"
                           referrerPolicy="no-referrer"
@@ -1784,7 +1894,7 @@ export default function App() {
                 <div>
                   <div className="h-44 overflow-hidden bg-slate-100">
                     <img
-                      src="/src/assets/images/car_cleaning_librevile_1794917339478.jpg"
+                      src="/src/assets/images/car_shine_alp_1795029311865.jpg"
                       alt="Véhicules et Mobilité"
                       className="w-full h-full object-cover"
                       referrerPolicy="no-referrer"
@@ -1890,6 +2000,7 @@ export default function App() {
             onValidateOrder={handleValidateOrder}
             onRefuseOrder={handleRefuseOrder}
             onDeleteOrder={handleDeleteOrder}
+            onArchivePhotos={handleArchiveBookingPhotos}
             onUpdatePrice={handleUpdatePrice}
             onAssignAgents={handleAssignAgents}
             onUpdateServiceBasePrice={handleUpdateServiceBasePrice}
@@ -1903,6 +2014,7 @@ export default function App() {
             bookings={bookings}
             agentName={userProfile?.displayName || 'Agent'}
             onToggleGps={handleToggleGps}
+            onUpdateAgentGps={handleUpdateAgentGps}
             onStartPlacement={handleStartPlacement}
             onFinishPlacement={handleFinishPlacement}
           />

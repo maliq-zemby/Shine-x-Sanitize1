@@ -12,7 +12,8 @@ import {
   Star,
 } from 'lucide-react';
 import { MANAGER_DISPLAY_PHONE, MANAGER_NAME, MANAGER_WHATSAPP } from '../data/mockData';
-import { Booking } from '../types';
+import { Booking, GpsPoint } from '../types';
+import { HIGH_ACCURACY_GEO_OPTIONS, reverseGeocodeNeighborhood } from '../utils/geocoding';
 import { LiveGpsMap } from './LiveGpsMap';
 import { WhatsAppComposerModal } from './WhatsAppComposerModal';
 
@@ -22,7 +23,7 @@ interface ClientReservationsViewProps {
   onOpenAuth: () => void;
   onAcceptCounterOffer: (bookingId: string) => void;
   onSubmitReview: (bookingId: string, rating: number, comment: string) => void;
-  onToggleClientGps: (bookingId: string, coords?: { lat: number; lng: number }) => void;
+  onToggleClientGps: (bookingId: string, coords?: GpsPoint) => void;
   onOpenCatalog: () => void;
 }
 
@@ -102,17 +103,20 @@ export const ClientReservationsView: React.FC<ClientReservationsViewProps> = ({
 
     if (typeof navigator !== 'undefined' && 'geolocation' in navigator) {
       navigator.geolocation.getCurrentPosition(
-        (pos) => {
+        async (pos) => {
           const lat = pos.coords.latitude;
           const lng = pos.coords.longitude;
-          // Keep inside Libreville bounding box if browser returns remote coordinates during desktop preview
-          const inLibreville = lat > 0.25 && lat < 0.55 && lng > 9.3 && lng < 9.8;
-          onToggleClientGps(
-            booking.id,
-            inLibreville ? { lat, lng } : booking.clientCoords
-          );
+          const accuracy = Math.round(pos.coords.accuracy);
+          const neighborhood = await reverseGeocodeNeighborhood(lat, lng);
+          onToggleClientGps(booking.id, {
+            lat,
+            lng,
+            neighborhood,
+            accuracy,
+            updatedAt: new Date().toISOString(),
+          });
           setGpsNotice(
-            `Votre position GPS (${booking.id}) est désormais visible en direct par l'agent, le gérant et l'administrateur.`
+            `Votre position GPS (${neighborhood} · ±${accuracy} m) est désormais visible en direct par l'agent, le gérant et l'administrateur.`
           );
         },
         () => {
@@ -121,7 +125,7 @@ export const ClientReservationsView: React.FC<ClientReservationsViewProps> = ({
             `Position GPS synchronisée (${booking.id}) sur la carte des agents, du gérant et de l'administrateur.`
           );
         },
-        { timeout: 3500 }
+        HIGH_ACCURACY_GEO_OPTIONS
       );
     } else {
       onToggleClientGps(booking.id, booking.clientCoords);
@@ -295,6 +299,22 @@ export const ClientReservationsView: React.FC<ClientReservationsViewProps> = ({
                   </span>
                 </div>
               </div>
+
+              {booking.status === 'completed' && (
+                <div
+                  role="status"
+                  className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-1 text-xs text-emerald-950"
+                >
+                  <div className="font-bold flex items-center gap-2 text-emerald-900">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+                    <span>Prestation terminée — Merci pour votre confiance !</span>
+                  </div>
+                  <p className="text-emerald-800 leading-relaxed">
+                    Merci pour votre confiance, {booking.clientName} ! L&apos;équipe{' '}
+                    <strong>Shine-x-Sanitize Alp Group</strong> vous remercie et espère vous revoir très bientôt.
+                  </p>
+                </div>
+              )}
 
               {isRefusedOrCancelled && (
                 <div

@@ -68,6 +68,7 @@
           "enum": ["pending_negotiation", "counter_offered", "confirmed", "in_transit", "in_progress", "completed", "rejected", "cancelled"]
         },
         "paymentMethod": { "type": "string", "enum": ["Airtel Money", "Moov Money", "Espèces", "Carte bancaire"] },
+        "photosArchivedAt": { "type": "string", "maxLength": 64 },
         "rating": { "type": "number" },
         "review": { "type": "string", "maxLength": 800 },
         "createdAt": { "type": "string", "maxLength": 64 },
@@ -110,13 +111,14 @@
     },
     "AppNotification": {
       "title": "AppNotification",
-      "description": "Notification temps réel ciblée par rôle (nouvelle commande, affectation agent, inscription, promotion validée)",
+      "description": "Notification temps réel ciblée par rôle (nouvelle commande, affectation agent, inscription, promotion validée, fin de mission, remerciement client, encouragement agent)",
       "type": "object",
       "properties": {
         "id": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "type": { "type": "string", "enum": ["new_booking", "agent_assigned", "new_registration", "promo_approved"] },
+        "type": { "type": "string", "enum": ["new_booking", "agent_assigned", "new_registration", "promo_approved", "mission_completed", "client_thank_you", "agent_encouragement"] },
         "title": { "type": "string", "minLength": 2, "maxLength": 140 },
         "body": { "type": "string", "minLength": 2, "maxLength": 400 },
+        "targetOwnerUid": { "type": "string", "maxLength": 128 },
         "relatedId": { "type": "string", "minLength": 1, "maxLength": 128 },
         "relatedTab": { "type": "string", "enum": ["home", "services", "mes_reservations", "suivi_commande", "agent_space", "admin"] },
         "actorUid": { "type": "string", "minLength": 1, "maxLength": 128 },

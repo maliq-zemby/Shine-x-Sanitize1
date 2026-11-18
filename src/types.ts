@@ -74,6 +74,14 @@ export interface Promotion {
   createdAt: string;
 }
 
+export interface GpsPoint {
+  lat: number;
+  lng: number;
+  neighborhood?: string;
+  accuracy?: number;
+  updatedAt?: string;
+}
+
 export interface Booking {
   id: string;
   ownerUid: string;
@@ -85,7 +93,7 @@ export interface Booking {
   clientPhone: string;
   commune: string;
   address: string;
-  clientCoords: { lat: number; lng: number };
+  clientCoords: GpsPoint;
   clientGpsActive: boolean;
   details: {
     material: string;
@@ -105,11 +113,12 @@ export interface Booking {
   rejectionReason?: string;
   assignedAgents: string[];
   gpsActive: boolean;
-  agentGps?: { lat: number; lng: number };
+  agentGps?: GpsPoint;
   startedAt?: string;
   completedAt?: string;
   beforePhotos: string[];
   afterPhotos: string[];
+  photosArchivedAt?: string;
   createdAt: string;
   updatedAt?: string;
   paymentMethod: PaymentMethod;
@@ -122,7 +131,10 @@ export type NotificationType =
   | 'new_booking'
   | 'agent_assigned'
   | 'new_registration'
-  | 'promo_approved';
+  | 'promo_approved'
+  | 'mission_completed'
+  | 'client_thank_you'
+  | 'agent_encouragement';
 
 export type ActiveTabId =
   | 'home'
@@ -139,6 +151,7 @@ export interface AppNotification {
   body: string;
   targetRoles: Role[];
   targetAgentNames?: string[];
+  targetOwnerUid?: string;
   relatedId: string;
   relatedTab?: ActiveTabId;
   actorUid: string;

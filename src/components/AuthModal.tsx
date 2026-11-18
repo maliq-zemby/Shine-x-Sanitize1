@@ -66,7 +66,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [companyDescription, setCompanyDescription] = useState('');
   const [phone, setPhone] = useState('+241 ');
   const [phoneTouched, setPhoneTouched] = useState(false);
-  const [commune, setCommune] = useState('Libreville Centre');
+  const [commune, setCommune] = useState('Amissa Chantal, Akanda');
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
 
@@ -102,7 +102,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       role: 'admin',
       accountStatus: 'active',
       phone: ADMIN_WHATSAPP_PHONE,
-      commune: 'Libreville Centre',
+      commune: 'Amissa Chantal, Akanda',
       acceptedTerms: true,
       acceptedTermsAt: now,
       createdAt: now,
@@ -643,7 +643,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
               <div className="space-y-1">
                 <label htmlFor="onb-commune" className="text-xs font-semibold text-slate-700">
-                  Commune principale
+                  Commune / Quartier principal
                 </label>
                 <select
                   id="onb-commune"
@@ -651,10 +651,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   onChange={(e) => setCommune(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900"
                 >
-                  <option value="Libreville Centre">Libreville Centre</option>
-                  <option value="Akanda">Akanda</option>
-                  <option value="Owendo">Owendo</option>
-                  <option value="Ntoum">Ntoum</option>
+                  <option value="Amissa Chantal, Akanda">Amissa Chantal, Akanda (Défaut)</option>
+                  <option value="Akanda (Angondjé / Sablière / Avorbam)">Akanda (Angondjé / Sablière / Avorbam)</option>
+                  <option value="Libreville (Batterie 4 / Louis / Glass)">Libreville (Batterie 4 / Louis / Glass)</option>
+                  <option value="Libreville (Lalala / Nzeng-Ayong / PK5-PK12)">Libreville (Lalala / Nzeng-Ayong / PK5-PK12)</option>
+                  <option value="Owendo (Carrefour SNI / Alenakiri / Port)">Owendo (Carrefour SNI / Alenakiri / Port)</option>
+                  <option value="Ntoum & Périphérie">Ntoum &amp; Périphérie</option>
                 </select>
               </div>
             </div>

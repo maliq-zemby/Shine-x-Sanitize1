@@ -1,9 +1,13 @@
 import React, { useState } from 'react';
 import {
+  Award,
   Bell,
   BellRing,
+  Camera,
   CheckCheck,
   ClipboardList,
+  Clock,
+  Heart,
   Megaphone,
   UserPlus,
   Wrench,
@@ -11,6 +15,30 @@ import {
 } from 'lucide-react';
 import { ActiveTabId, AppNotification, NotificationType } from '../types';
 import { PushPermissionState } from '../utils/notifications';
+
+const MAX_NOTIFICATION_AGE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Exclut automatiquement les notifications datant de plus de 24 heures
+ * ou émises avant minuit (jour précédent).
+ */
+export function isNotificationFresh(createdAt?: string, nowMs: number = Date.now()): boolean {
+  if (!createdAt) return false;
+  const createdMs = Date.parse(createdAt);
+  if (Number.isNaN(createdMs)) return false;
+
+  if (nowMs - createdMs > MAX_NOTIFICATION_AGE_MS) {
+    return false;
+  }
+
+  const startOfToday = new Date(nowMs);
+  startOfToday.setHours(0, 0, 0, 0);
+  if (createdMs < startOfToday.getTime()) {
+    return false;
+  }
+
+  return true;
+}
 
 interface NotificationCenterProps {
   notifications: AppNotification[];
@@ -46,6 +74,21 @@ const TYPE_META: Record<
     badgeClass: 'bg-emerald-900 text-amber-300',
     Icon: Megaphone,
   },
+  mission_completed: {
+    label: 'Photos & Fin reçues',
+    badgeClass: 'bg-emerald-100 text-emerald-800',
+    Icon: Camera,
+  },
+  client_thank_you: {
+    label: 'Merci de votre confiance',
+    badgeClass: 'bg-rose-100 text-rose-700',
+    Icon: Heart,
+  },
+  agent_encouragement: {
+    label: 'Message du Gérant',
+    badgeClass: 'bg-amber-100 text-amber-800',
+    Icon: Award,
+  },
 };
 
 function formatNotifTime(iso: string): string {
@@ -73,7 +116,8 @@ export const NotificationBell: React.FC<NotificationCenterProps> = ({
   const [open, setOpen] = useState(false);
   const [requestingPush, setRequestingPush] = useState(false);
 
-  const unreadCount = notifications.filter((n) => !readIds.includes(n.id)).length;
+  const freshNotifications = notifications.filter((n) => isNotificationFresh(n.createdAt));
+  const unreadCount = freshNotifications.filter((n) => !readIds.includes(n.id)).length;
 
   const handleRequestPush = async () => {
     setRequestingPush(true);
@@ -109,11 +153,17 @@ export const NotificationBell: React.FC<NotificationCenterProps> = ({
           />
           <div className="fixed sm:absolute right-3 sm:right-0 top-16 sm:top-12 z-50 w-[calc(100vw-1.5rem)] sm:w-96 bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden flex flex-col max-h-[78vh]">
             <div className="px-4 py-3.5 border-b border-slate-200 flex items-center justify-between gap-2 bg-slate-50">
-              <div className="flex items-center gap-2">
-                <BellRing className="w-4 h-4 text-emerald-700" />
-                <span className="text-xs font-bold text-slate-900">
-                  Notifications temps réel
-                </span>
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <BellRing className="w-4 h-4 text-emerald-700" />
+                  <span className="text-xs font-bold text-slate-900">
+                    Notifications temps réel
+                  </span>
+                </div>
+                <div className="text-[10px] text-slate-500 flex items-center gap-1">
+                  <Clock className="w-3 h-3" />
+                  <span>Alertes du jour (effacement auto après minuit / 24h)</span>
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 {unreadCount > 0 && (
@@ -161,14 +211,14 @@ export const NotificationBell: React.FC<NotificationCenterProps> = ({
             )}
 
             <div className="overflow-y-auto divide-y divide-slate-100">
-              {notifications.length === 0 ? (
+              {freshNotifications.length === 0 ? (
                 <div className="p-6 text-center text-xs text-slate-500">
-                  Aucune alerte pour votre profil pour le moment.
+                  Aucune alerte active aujourd&apos;hui pour votre profil.
                 </div>
               ) : (
-                notifications.map((notif) => {
+                freshNotifications.map((notif) => {
                   const isUnread = !readIds.includes(notif.id);
-                  const meta = TYPE_META[notif.type];
+                  const meta = TYPE_META[notif.type] || TYPE_META.new_booking;
                   const Icon = meta.Icon;
 
                   return (
@@ -233,8 +283,8 @@ export const LiveNotificationToast: React.FC<LiveNotificationToastProps> = ({
   onDismiss,
   onOpenTarget,
 }) => {
-  if (!notification) return null;
-  const meta = TYPE_META[notification.type];
+  if (!notification || !isNotificationFresh(notification.createdAt)) return null;
+  const meta = TYPE_META[notification.type] || TYPE_META.new_booking;
   const Icon = meta.Icon;
 
   return (

@@ -35,11 +35,31 @@ export const PROTOTYPE_BOOKING_IDS = new Set([
 
 export const PROTOTYPE_PROMO_IDS = new Set(['promo-1', 'promo-2', 'promo-3']);
 
-export const COMMUNES: { name: string; coords: { lat: number; lng: number } }[] = [
-  { name: 'Libreville (Centre-Ville / Louis / Glass)', coords: { lat: 0.3901, lng: 9.4544 } },
-  { name: 'Akanda (Batterie 4 / Angondjé / Cité Damas)', coords: { lat: 0.452, lng: 9.431 } },
-  { name: 'Owendo (Nzeng-Ayong / Lalala / Owendo Port)', coords: { lat: 0.326, lng: 9.498 } },
-  { name: 'Ntoum & Périphérie', coords: { lat: 0.388, lng: 9.761 } },
+export const COMMUNES: {
+  id: 'Akanda' | 'Libreville' | 'Owendo' | 'Ntoum';
+  name: string;
+  coords: { lat: number; lng: number };
+}[] = [
+  {
+    id: 'Akanda',
+    name: 'Akanda (Amissa Chantal / Angondjé / Sablière)',
+    coords: { lat: 0.5025, lng: 9.406 },
+  },
+  {
+    id: 'Libreville',
+    name: 'Libreville (Batterie 4 / Louis / Glass / Nzeng-Ayong)',
+    coords: { lat: 0.391, lng: 9.4515 },
+  },
+  {
+    id: 'Owendo',
+    name: 'Owendo (Carrefour SNI / Lalala / Port d’Owendo)',
+    coords: { lat: 0.3185, lng: 9.5025 },
+  },
+  {
+    id: 'Ntoum',
+    name: 'Ntoum & Périphérie (Bikélé / Essassa)',
+    coords: { lat: 0.388, lng: 9.761 },
+  },
 ];
 
 export const VEHICLE_BRANDS = [
@@ -91,7 +111,7 @@ export const SERVICES: ServiceItem[] = [
     duration: '2h - 3h',
     description:
       'Nettoyage en profondeur par injection-extraction vapeur, élimination des acariens et des taches tenaces.',
-    image: '/src/assets/images/sofa_cleaning_service_1794914545035.jpg',
+    image: '/src/assets/images/sofa_shine_alp_1795029309581.jpg',
     materials: ['Velours', 'Cuir', 'Tissu Coton', 'Synthétique', 'Daim'],
     availableOptions: [
       'Désodorisant',
@@ -109,7 +129,7 @@ export const SERVICES: ServiceItem[] = [
     duration: '5h - 8h',
     description:
       'Remise en état complète après construction ou rénovation : évacuation poussières fines de ciment, décapage traces de peinture sur vitres, lavage mécanisé des sols et sanitaires.',
-    image: '/src/assets/images/btp_cleaning_libreville_1794920029513.jpg',
+    image: '/src/assets/images/btp_shine_alp_1795029312202.jpg',
     materials: ['Appartement / Villa neuve', 'Immeuble / Bureaux BTP', 'Local commercial rénové', 'Façade & Baies vitrées'],
     availableOptions: [
       'Désodorisant',
@@ -128,7 +148,7 @@ export const SERVICES: ServiceItem[] = [
     duration: '1h30 - 2h30',
     description:
       'Lavage complet intérieur et extérieur à domicile à Libreville : carrosserie, aspiration, shampoing des sièges et désinfection habitacle selon la marque et le nombre de places.',
-    image: '/src/assets/images/car_cleaning_librevile_1794917339478.jpg',
+    image: '/src/assets/images/car_shine_alp_1795029311865.jpg',
     materials: ['Carrosserie + Sièges Tissu', 'Carrosserie + Sellerie Cuir', 'Intérieur Complet Uniquement', 'Extérieur + Lustrage'],
     availableOptions: [
       'Désodorisant',
@@ -147,7 +167,7 @@ export const SERVICES: ServiceItem[] = [
     duration: '45 min',
     description:
       'Dégraissage chaîne et moteur, lavage mousse active sans rayure à Libreville, séchage microfibre et protection plastiques & chromes.',
-    image: '/src/assets/images/moto_cleaning_libreville_1794920027926.jpg',
+    image: '/src/assets/images/moto_shine_alp_1795029315085.jpg',
     materials: ['Moto Routière / Trail', 'Scooter Urbain', 'Moto Cross / Quad'],
     availableOptions: [
       'Désodorisant',
@@ -166,7 +186,7 @@ export const SERVICES: ServiceItem[] = [
     duration: '30 - 45 min',
     description:
       'Nettoyage haute précision pour VTT, vélo de route ou vélo électrique : cadre, transmission, dérailleur et lubrification.',
-    image: '/src/assets/images/velo_cleaning_libreville_1794920028893.jpg',
+    image: '/src/assets/images/velo_shine_alp_1795029315713.jpg',
     materials: ['VTT', 'Vélo de Route Carbone', 'Vélo Électrique (VAE)', 'Vélo de Ville'],
     availableOptions: [
       'Désodorisant',
@@ -184,7 +204,7 @@ export const SERVICES: ServiceItem[] = [
     duration: '4h - 6h',
     description:
       'Nettoyage complet des espaces professionnels, cloisons vitrées, sols, postes de travail et sanitaires.',
-    image: '/src/assets/images/office_sanitization_1794914544760.jpg',
+    image: '/src/assets/images/office_shine_alp_1795029308753.jpg',
     materials: ['Surfaces Verre', 'Moquette Bureau', 'Carrelage', 'Mobilier Bois'],
     availableOptions: [
       'Désodorisant',
@@ -202,7 +222,7 @@ export const SERVICES: ServiceItem[] = [
     duration: '1h30',
     description:
       'Intervention par injection-extraction vapeur haute température directement sur votre matelas, élimination des acariens, bactéries et auréoles.',
-    image: '/src/assets/images/matelas_cleaning_libreville_1794922451005.jpg',
+    image: '/src/assets/images/matelas_shine_alp_1795029312918.jpg',
     materials: ['Matelas Latex', 'Mousse Mémoire', 'Ressorts', 'Coton Bio'],
     availableOptions: [
       'Désodorisant',
@@ -220,7 +240,7 @@ export const SERVICES: ServiceItem[] = [
     duration: '2h',
     description:
       'Shampouinage en profondeur et brossage rotatif mécanisé pour redonner éclat, douceur et propreté à vos tapis et moquettes.',
-    image: '/src/assets/images/tapis_moquette_libreville_1794922452052.jpg',
+    image: '/src/assets/images/tapis_shine_alp_1795029313826.jpg',
     materials: ['Laine', 'Soie', 'Fibres Synthétiques', 'Jute'],
     availableOptions: [
       'Désodorisant',
@@ -238,7 +258,7 @@ export const SERVICES: ServiceItem[] = [
     duration: '1h30 - 2h',
     description:
       'Lavage sans trace des baies vitrées, vérandas, garde-corps et miroirs avec traitement anti-calcaire et anti-embruns marins.',
-    image: '/src/assets/images/office_sanitization_1794914544760.jpg',
+    image: '/src/assets/images/office_shine_alp_1795029308753.jpg',
     materials: ['Baies vitrées villa', 'Vitrine commerciale', 'Verre teinté / miroir'],
     availableOptions: [
       'Désodorisant',
