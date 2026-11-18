@@ -1,27 +1,30 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
   createUserWithEmailAndPassword,
-  sendEmailVerification,
   signInWithEmailAndPassword,
-  signInWithPopup,
-  signInWithRedirect,
-  User as FirebaseUser,
+  updateProfile,
 } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
 import {
   AlertCircle,
   Building2,
   CheckCircle2,
+  Eye,
+  EyeOff,
   FileText,
   KeyRound,
-  MailCheck,
-  RefreshCw,
+  LogIn,
   ShieldCheck,
   User,
+  UserPlus,
   Wrench,
   X,
 } from 'lucide-react';
 import {
   ADMIN_BOOTSTRAP_EMAIL,
+  ADMIN_DISPLAY_NAME,
+  ADMIN_FIRST_NAME,
+  ADMIN_LAST_NAME,
   ADMIN_WHATSAPP_PHONE,
   APP_OFFICIAL_NAME,
   BRAND_LOGO_URL,
@@ -29,43 +32,34 @@ import {
 import {
   auth,
   authPersistenceReady,
-  firebaseProjectId,
-  formatGoogleAuthError,
-  googleProvider,
+  buildClassicAuthEmail,
+  db,
+  formatClassicAuthError,
+  isDefaultAdminIdentity,
+  verifyAdminBootstrapPassword,
 } from '../firebase';
 import { Role, UserProfile } from '../types';
 
 interface AuthModalProps {
-  pendingGoogleUser: FirebaseUser | null;
-  initialError?: string;
-  onAuthComplete: (profile: UserProfile) => void;
-  onEmailVerified?: (user: FirebaseUser) => void;
+  initialMode?: 'login' | 'register';
+  onAuthComplete: (profile: UserProfile) => Promise<void> | void;
+  onLoginSuccess?: () => void;
   onClose: () => void;
 }
 
 const WHATSAPP_INTERNATIONAL_REGEX = /^\+[1-9][0-9\s\-]{6,30}$/;
 
-function isEmbeddedIframe(): boolean {
-  try {
-    return typeof window !== 'undefined' && window.self !== window.top;
-  } catch {
-    return true;
-  }
-}
-
 export const AuthModal: React.FC<AuthModalProps> = ({
-  pendingGoogleUser,
-  initialError = '',
+  initialMode = 'login',
   onAuthComplete,
-  onEmailVerified,
+  onLoginSuccess,
   onClose,
 }) => {
-  const [googleUser, setGoogleUser] = useState<FirebaseUser | null>(pendingGoogleUser);
-  const [authMethod, setAuthMethod] = useState<'google' | 'email'>('google');
-  const [emailMode, setEmailMode] = useState<'login' | 'register'>('login');
-  const [emailInput, setEmailInput] = useState('');
-  const [passwordInput, setPasswordInput] = useState('');
-  const [fullNameInput, setFullNameInput] = useState('');
+  const [mode, setMode] = useState<'login' | 'register'>(initialMode);
+  const [lastName, setLastName] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
 
   const [selectedRole, setSelectedRole] = useState<Role>('client');
   const [companyName, setCompanyName] = useState('');
@@ -75,190 +69,173 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [commune, setCommune] = useState('Libreville Centre');
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
+
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(initialError);
-  const [infoNotice, setInfoNotice] = useState('');
+  const [error, setError] = useState('');
 
-  useEffect(() => {
-    if (initialError) {
-      setError(initialError);
-    }
-  }, [initialError]);
-
-  useEffect(() => {
-    setGoogleUser(pendingGoogleUser);
-    if (
-      pendingGoogleUser?.email?.toLowerCase() === ADMIN_BOOTSTRAP_EMAIL.toLowerCase() &&
-      phone.trim() === '+241'
-    ) {
-      setPhone(ADMIN_WHATSAPP_PHONE);
-    }
-  }, [pendingGoogleUser]);
-
+  const trimmedLastName = lastName.trim();
+  const trimmedFirstName = firstName.trim();
   const trimmedPhone = phone.trim();
   const digitsOnlyCount = trimmedPhone.replace(/\D/g, '').length;
   const isPhoneValid =
     WHATSAPP_INTERNATIONAL_REGEX.test(trimmedPhone) && digitsOnlyCount >= 9;
 
-  const isAdminEmail =
-    googleUser?.email?.toLowerCase() === ADMIN_BOOTSTRAP_EMAIL.toLowerCase() &&
-    googleUser?.emailVerified;
-
   const isCompanyValid =
-    selectedRole !== 'manager' ||
-    Boolean(isAdminEmail) ||
-    (companyName.trim().length >= 2 && companyDescription.trim().length >= 5);
+    selectedRole !== 'manager' || companyName.trim().length >= 2;
 
-  const canSubmit = Boolean(googleUser) && isPhoneValid && acceptedTerms && isCompanyValid;
+  const canRegister =
+    trimmedLastName.length >= 2 &&
+    trimmedFirstName.length >= 2 &&
+    password.length >= 6 &&
+    isPhoneValid &&
+    isCompanyValid &&
+    acceptedTerms;
 
-  const handleGooglePopup = async () => {
-    setError('');
-    setInfoNotice('');
-    setLoading(true);
-    try {
-      await authPersistenceReady;
-      const cred = await signInWithPopup(auth, googleProvider);
-      setGoogleUser(cred.user);
-      if (cred.user.email?.toLowerCase() === ADMIN_BOOTSTRAP_EMAIL.toLowerCase()) {
-        setPhone(ADMIN_WHATSAPP_PHONE);
-      }
-    } catch (err: unknown) {
-      setError(formatGoogleAuthError(err));
-    } finally {
-      setLoading(false);
-    }
+  const buildAdminProfile = (uid: string): UserProfile => {
+    const now = new Date().toISOString();
+    return {
+      uid,
+      email: ADMIN_BOOTSTRAP_EMAIL,
+      displayName: ADMIN_DISPLAY_NAME,
+      firstName: ADMIN_FIRST_NAME,
+      lastName: ADMIN_LAST_NAME,
+      role: 'admin',
+      accountStatus: 'active',
+      phone: ADMIN_WHATSAPP_PHONE,
+      commune: 'Libreville Centre',
+      acceptedTerms: true,
+      acceptedTermsAt: now,
+      createdAt: now,
+      updatedAt: now,
+    };
   };
 
-  const handleGoogleRedirect = async () => {
-    setError('');
-    setInfoNotice('');
-    setLoading(true);
-    try {
-      await authPersistenceReady;
-      await signInWithRedirect(auth, googleProvider);
-    } catch (err: unknown) {
-      setError(formatGoogleAuthError(err));
-      setLoading(false);
-    }
-  };
-
-  const handlePrimaryGoogleAuth = () => {
-    if (isEmbeddedIframe()) {
-      return handleGooglePopup();
-    }
-    return handleGoogleRedirect();
-  };
-
-  const handleEmailPasswordAuth = async (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    setInfoNotice('');
-    const normalizedEmail = emailInput.trim();
-    if (!normalizedEmail || passwordInput.length < 6) {
-      setError('Veuillez saisir une adresse e-mail valide et un mot de passe (6 caractères minimum).');
+
+    if (trimmedLastName.length < 2 || trimmedFirstName.length < 2) {
+      setError('Veuillez saisir votre Nom et votre Prénom.');
+      return;
+    }
+    if (password.length < 6) {
+      setError('Le mot de passe doit contenir au moins 6 caractères.');
       return;
     }
 
+    const authEmail = buildClassicAuthEmail(trimmedLastName, trimmedFirstName);
+    const isAdminCandidate = isDefaultAdminIdentity(trimmedLastName, trimmedFirstName);
+
     setLoading(true);
     try {
       await authPersistenceReady;
-      if (emailMode === 'login') {
-        const cred = await signInWithEmailAndPassword(auth, normalizedEmail, passwordInput);
-        setGoogleUser(cred.user);
-        if (cred.user.email?.toLowerCase() === ADMIN_BOOTSTRAP_EMAIL.toLowerCase()) {
-          setPhone(ADMIN_WHATSAPP_PHONE);
-        }
-        if (!cred.user.emailVerified) {
-          setInfoNotice(
-            "Votre adresse e-mail n'est pas encore vérifiée. Vérifiez votre boîte de réception ou cliquez sur « Renvoyer l'e-mail »."
-          );
+      const cred = await signInWithEmailAndPassword(auth, authEmail, password);
+
+      if (isAdminCandidate) {
+        const snap = await getDoc(doc(db, 'users', cred.user.uid)).catch(() => null);
+        if (!snap || !snap.exists()) {
+          await onAuthComplete(buildAdminProfile(cred.user.uid));
+          return;
         }
       } else {
-        const cred = await createUserWithEmailAndPassword(auth, normalizedEmail, passwordInput);
-        try {
-          await sendEmailVerification(cred.user);
-        } catch {
-          // ignore email send throttling errors
+        const snap = await getDoc(doc(db, 'users', cred.user.uid)).catch(() => null);
+        if (snap && !snap.exists()) {
+          setMode('register');
+          setError(
+            "Votre profil n'est pas encore enregistré. Complétez votre inscription ci-dessous."
+          );
+          setLoading(false);
+          return;
         }
-        setGoogleUser(cred.user);
-        if (cred.user.email?.toLowerCase() === ADMIN_BOOTSTRAP_EMAIL.toLowerCase()) {
-          setPhone(ADMIN_WHATSAPP_PHONE);
-        }
-        setInfoNotice(
-          'Compte créé. Un lien de confirmation vient d’être envoyé à votre adresse e-mail pour activer vos droits de sécurité.'
-        );
       }
+
+      onLoginSuccess?.();
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code || '';
-      if (code === 'auth/operation-not-allowed') {
-        setError(
-          "La connexion par E-mail / Mot de passe n'est pas encore activée dans Firebase Console. Ouvrez Firebase Console → Authentication → Sign-in method → activez « Adresse e-mail/Mot de passe »."
-        );
-      } else if (code === 'auth/user-not-found' || code === 'auth/invalid-credential') {
-        setError(
-          "Identifiants incorrects ou compte inexistant. Utilisez l'onglet « Créer un compte » si vous vous connectez pour la première fois."
-        );
-      } else if (code === 'auth/email-already-in-use') {
-        setError('Un compte existe déjà avec cet e-mail. Passez sur « Se connecter ».');
+      const canBootstrapAdmin =
+        isAdminCandidate &&
+        (code === 'auth/user-not-found' || code === 'auth/invalid-credential') &&
+        (await verifyAdminBootstrapPassword(password));
+
+      if (canBootstrapAdmin) {
+        try {
+          const cred = await createUserWithEmailAndPassword(auth, authEmail, password);
+          await updateProfile(cred.user, { displayName: ADMIN_DISPLAY_NAME }).catch(() => {});
+          await onAuthComplete(buildAdminProfile(cred.user.uid));
+          return;
+        } catch (bootstrapErr: unknown) {
+          setError(formatClassicAuthError(bootstrapErr));
+        }
       } else {
-        setError(
-          err instanceof Error
-            ? err.message
-            : 'Erreur lors de la connexion par e-mail. Réessayez.'
-        );
+        setError(formatClassicAuthError(err));
       }
     } finally {
       setLoading(false);
     }
   };
 
-  const handleResendVerification = async () => {
-    if (!googleUser) return;
-    setError('');
-    setLoading(true);
-    try {
-      await sendEmailVerification(googleUser);
-      setInfoNotice('E-mail de vérification renvoyé. Consultez votre boîte de réception.');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Impossible d'envoyer l'e-mail.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleCheckVerification = async () => {
-    if (!auth.currentUser) return;
-    setError('');
-    setLoading(true);
-    try {
-      await auth.currentUser.reload();
-      const refreshed = auth.currentUser;
-      setGoogleUser(refreshed);
-      if (refreshed.emailVerified) {
-        setInfoNotice('Adresse e-mail vérifiée avec succès.');
-        onEmailVerified?.(refreshed);
-      } else {
-        setError("Votre adresse e-mail n'est pas encore confirmée. Cliquez sur le lien reçu par e-mail.");
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erreur de vérification.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleCreateProfile = (e: React.FormEvent) => {
+  const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!googleUser) return;
+    setError('');
     setPhoneTouched(true);
 
+    if (trimmedLastName.length < 2 || trimmedFirstName.length < 2) {
+      setError('Veuillez saisir votre Nom et votre Prénom (2 caractères minimum chacun).');
+      return;
+    }
+    if (password.length < 6) {
+      setError('Le mot de passe doit contenir au moins 6 caractères.');
+      return;
+    }
+
+    const authEmail = buildClassicAuthEmail(trimmedLastName, trimmedFirstName);
+    const isAdminCandidate = isDefaultAdminIdentity(trimmedLastName, trimmedFirstName);
+
+    if (isAdminCandidate) {
+      const validAdminPass = await verifyAdminBootstrapPassword(password);
+      if (!validAdminPass) {
+        setError(
+          "L'identité ZEMBY Maliq est réservée à l'administrateur principal."
+        );
+        return;
+      }
+
+      setLoading(true);
+      try {
+        await authPersistenceReady;
+        let uid: string;
+        try {
+          const cred = await createUserWithEmailAndPassword(auth, authEmail, password);
+          await updateProfile(cred.user, { displayName: ADMIN_DISPLAY_NAME }).catch(() => {});
+          uid = cred.user.uid;
+        } catch (createErr: unknown) {
+          const code = (createErr as { code?: string })?.code || '';
+          if (code === 'auth/email-already-in-use') {
+            const cred = await signInWithEmailAndPassword(auth, authEmail, password);
+            uid = cred.user.uid;
+          } else {
+            throw createErr;
+          }
+        }
+        await onAuthComplete(buildAdminProfile(uid));
+      } catch (err: unknown) {
+        setError(formatClassicAuthError(err));
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    if (selectedRole === 'manager' && companyName.trim().length < 2) {
+      setError("Veuillez saisir le nom de votre entreprise (2 caractères minimum).");
+      return;
+    }
     if (!isPhoneValid) {
       setError(
         'Veuillez renseigner un numéro WhatsApp valide au format international (ex : +241 065 96 12 38).'
       );
       return;
     }
-
     if (!acceptedTerms) {
       setError(
         "Vous devez accepter les conditions d'utilisation et la politique de confidentialité pour créer votre compte."
@@ -266,47 +243,54 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       return;
     }
 
-    if (selectedRole === 'manager' && !isAdminEmail && (!companyName.trim() || !companyDescription.trim())) {
-      setError("Veuillez indiquer le nom de votre entreprise et une description de vos services.");
-      return;
+    setLoading(true);
+    try {
+      await authPersistenceReady;
+      const cred = await createUserWithEmailAndPassword(auth, authEmail, password);
+      const formattedLastName = trimmedLastName.toUpperCase();
+      const formattedFirstName = trimmedFirstName;
+      const fullDisplayName = `${formattedLastName} ${formattedFirstName}`;
+
+      await updateProfile(cred.user, { displayName: fullDisplayName }).catch(() => {});
+
+      const now = new Date().toISOString();
+      const finalStatus = selectedRole === 'manager' ? 'pending' : 'active';
+
+      const profile: UserProfile = {
+        uid: cred.user.uid,
+        email: authEmail,
+        displayName: fullDisplayName,
+        firstName: formattedFirstName,
+        lastName: formattedLastName,
+        role: selectedRole,
+        accountStatus: finalStatus,
+        phone: trimmedPhone,
+        commune,
+        acceptedTerms: true,
+        acceptedTermsAt: now,
+        ...(selectedRole === 'manager'
+          ? {
+              companyName: companyName.trim(),
+              ...(companyDescription.trim()
+                ? { companyDescription: companyDescription.trim() }
+                : {}),
+            }
+          : {}),
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      await onAuthComplete(profile);
+    } catch (err: unknown) {
+      setError(formatClassicAuthError(err));
+    } finally {
+      setLoading(false);
     }
-
-    const now = new Date().toISOString();
-    const finalRole: Role = isAdminEmail ? 'admin' : selectedRole;
-    const finalStatus = finalRole === 'manager' ? 'pending' : 'active';
-
-    const profile: UserProfile = {
-      uid: googleUser.uid,
-      email: googleUser.email || '',
-      displayName:
-        googleUser.displayName ||
-        fullNameInput.trim() ||
-        (finalRole === 'admin' ? 'Direction Shine-x-Sanitize Alp Group' : 'Utilisateur Shine'),
-      ...(googleUser.photoURL ? { photoURL: googleUser.photoURL } : {}),
-      role: finalRole,
-      accountStatus: finalStatus,
-      phone: trimmedPhone,
-      commune,
-      acceptedTerms: true,
-      acceptedTermsAt: now,
-      ...(finalRole === 'manager'
-        ? {
-            companyName: companyName.trim(),
-            companyDescription: companyDescription.trim(),
-          }
-        : {}),
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    onAuthComplete(profile);
   };
-
-  const needsEmailVerification = Boolean(googleUser && !googleUser.emailVerified);
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/65 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl max-w-lg w-full p-6 sm:p-8 space-y-6 shadow-2xl border border-slate-200 relative my-8">
+      <div className="bg-white rounded-2xl max-w-lg w-full p-6 sm:p-8 space-y-5 shadow-2xl border border-slate-200 relative my-8">
         <button
           type="button"
           onClick={onClose}
@@ -327,344 +311,271 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           <div>
             <h2 className="text-lg font-bold text-slate-900">{APP_OFFICIAL_NAME}</h2>
             <p className="text-xs text-slate-500">
-              {needsEmailVerification
-                ? 'Vérification de sécurité requise'
-                : googleUser
-                ? 'Finalisez votre inscription (une seule fois)'
-                : 'Connexion sécurisée — Client, Agent, Entreprise & Admin'}
+              {mode === 'login'
+                ? 'Connexion — Nom, Prénom & Mot de passe'
+                : 'Inscription — Client, Entreprise ou Agent'}
             </p>
           </div>
         </div>
 
-        {!googleUser ? (
-          <div className="space-y-4">
-            {/* Switch Google vs Email/Password */}
-            <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200">
-              <button
-                type="button"
-                onClick={() => {
-                  setAuthMethod('google');
-                  setError('');
-                }}
-                className={`py-2 text-xs font-semibold rounded-lg transition-colors ${
-                  authMethod === 'google'
-                    ? 'bg-white text-slate-900 shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Compte Google
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setAuthMethod('email');
-                  setError('');
-                }}
-                className={`py-2 text-xs font-semibold rounded-lg transition-colors ${
-                  authMethod === 'email'
-                    ? 'bg-white text-slate-900 shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                E-mail & Mot de passe
-              </button>
-            </div>
+        {/* Mode Switch: Connexion vs Inscription */}
+        <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200">
+          <button
+            type="button"
+            onClick={() => {
+              setMode('login');
+              setError('');
+            }}
+            className={`py-2.5 text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-1.5 ${
+              mode === 'login'
+                ? 'bg-white text-slate-900 shadow-sm'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <LogIn className="w-3.5 h-3.5" />
+            <span>Se connecter</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setMode('register');
+              setError('');
+            }}
+            className={`py-2.5 text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-1.5 ${
+              mode === 'register'
+                ? 'bg-white text-slate-900 shadow-sm'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <UserPlus className="w-3.5 h-3.5" />
+            <span>Créer un compte</span>
+          </button>
+        </div>
 
-            {authMethod === 'google' ? (
-              <div className="space-y-4">
-                <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-4 text-xs text-emerald-950 space-y-1.5">
-                  <div className="font-bold flex items-center gap-2">
-                    <ShieldCheck className="w-4 h-4 text-emerald-700" />
-                    <span>Connexion persistante (inscription unique)</span>
-                  </div>
-                  <p className="text-emerald-900/90 leading-relaxed">
-                    Connectez-vous une seule fois : votre session reste active sur votre téléphone Android ou iOS pour accéder directement à votre tableau de bord, sans jamais refaire d&apos;inscription.
-                  </p>
-                </div>
-
-                {error && (
-                  <div className="bg-rose-50 border border-rose-200 text-rose-900 rounded-xl px-4 py-3 text-xs space-y-2 leading-relaxed">
-                    <p>{error}</p>
-                    {error.includes('non autorisé') && (
-                      <div className="pt-1 border-t border-rose-200/80 space-y-1.5">
-                        <p className="font-semibold text-rose-950">
-                          Projet Firebase actif : <span className="font-mono">{firebaseProjectId}</span>
-                        </p>
-                        <a
-                          href={`https://console.firebase.google.com/project/${firebaseProjectId}/authentication/settings`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 font-semibold text-emerald-800 underline hover:text-emerald-950"
-                        >
-                          Ouvrir Authorized domains dans Firebase Console ({firebaseProjectId})
-                        </a>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                <button
-                  type="button"
-                  disabled={loading}
-                  onClick={handlePrimaryGoogleAuth}
-                  className="w-full py-3 min-h-[48px] bg-slate-900 hover:bg-emerald-800 text-white text-sm font-semibold rounded-xl shadow-sm transition-colors flex items-center justify-center gap-3 disabled:opacity-60"
-                >
-                  <svg className="w-4 h-4" viewBox="0 0 24 24" aria-hidden="true">
-                    <path
-                      fill="currentColor"
-                      d="M21.35 11.1h-9.17v2.73h6.51c-.33 3.81-3.5 5.44-6.5 5.44C8.36 19.27 5 16.25 5 12c0-4.1 3.2-7.27 7.2-7.27c3.09 0 4.9 1.97 4.9 1.97L19 4.72S16.56 2 12.1 2C6.42 2 2.03 6.8 2.03 12c0 5.05 4.13 10 10.22 10c5.35 0 9.25-3.67 9.25-9.09c0-1.15-.15-1.81-.15-1.81Z"
-                    />
-                  </svg>
-                  <span>
-                    {loading
-                      ? isEmbeddedIframe()
-                        ? 'Connexion Google en cours...'
-                        : 'Redirection Google en cours...'
-                      : 'Continuer avec Google'}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  disabled={loading}
-                  onClick={isEmbeddedIframe() ? handleGoogleRedirect : handleGooglePopup}
-                  className="w-full py-2.5 min-h-[42px] bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition-colors disabled:opacity-60"
-                >
-                  {isEmbeddedIframe()
-                    ? 'Problème de pop-up ? Connexion par redirection Google'
-                    : 'Alternative ordinateur : ouvrir Google en fenêtre pop-up'}
-                </button>
-              </div>
-            ) : (
-              <form onSubmit={handleEmailPasswordAuth} className="space-y-3.5">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-semibold text-slate-700">
-                    {emailMode === 'login' ? 'Connexion par e-mail' : 'Créer un compte par e-mail'}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEmailMode(emailMode === 'login' ? 'register' : 'login');
-                      setError('');
-                    }}
-                    className="font-semibold text-emerald-700 hover:text-emerald-800 underline"
-                  >
-                    {emailMode === 'login' ? 'Créer un compte' : 'Déjà inscrit ? Se connecter'}
-                  </button>
-                </div>
-
-                {emailMode === 'register' && (
-                  <div className="space-y-1">
-                    <label htmlFor="auth-fullname" className="text-xs font-semibold text-slate-700">
-                      Nom complet
-                    </label>
-                    <input
-                      id="auth-fullname"
-                      type="text"
-                      value={fullNameInput}
-                      onChange={(e) => setFullNameInput(e.target.value)}
-                      placeholder="Ex: Jean Mba"
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-700"
-                    />
-                  </div>
-                )}
-
-                <div className="space-y-1">
-                  <label htmlFor="auth-email" className="text-xs font-semibold text-slate-700">
-                    Adresse e-mail *
-                  </label>
-                  <input
-                    id="auth-email"
-                    type="email"
-                    required
-                    value={emailInput}
-                    onChange={(e) => setEmailInput(e.target.value)}
-                    placeholder="exemple@domaine.com"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-700"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label htmlFor="auth-password" className="text-xs font-semibold text-slate-700">
-                    Mot de passe *
-                  </label>
-                  <input
-                    id="auth-password"
-                    type="password"
-                    required
-                    minLength={6}
-                    value={passwordInput}
-                    onChange={(e) => setPasswordInput(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-700"
-                  />
-                </div>
-
-                {error && (
-                  <div className="bg-rose-50 border border-rose-200 text-rose-800 rounded-xl px-4 py-2.5 text-xs leading-relaxed">
-                    {error}
-                  </div>
-                )}
-
-                {infoNotice && (
-                  <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-xl px-4 py-2.5 text-xs leading-relaxed">
-                    {infoNotice}
-                  </div>
-                )}
-
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full py-3 min-h-[46px] bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-2 disabled:opacity-60"
-                >
-                  <KeyRound className="w-4 h-4" />
-                  <span>
-                    {loading
-                      ? 'Traitement...'
-                      : emailMode === 'login'
-                      ? 'Se connecter'
-                      : 'Créer le compte'}
-                  </span>
-                </button>
-              </form>
-            )}
-          </div>
-        ) : needsEmailVerification ? (
-          <div className="space-y-4">
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-2 text-xs text-amber-950">
+        {mode === 'login' ? (
+          <form onSubmit={handleLoginSubmit} className="space-y-4">
+            <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-3.5 text-xs text-emerald-950 space-y-1">
               <div className="font-bold flex items-center gap-2">
-                <MailCheck className="w-4 h-4 text-amber-700 shrink-0" />
-                <span>Confirmez votre adresse e-mail ({googleUser.email})</span>
+                <ShieldCheck className="w-4 h-4 text-emerald-700 shrink-0" />
+                <span>Connexion persistante (inscription unique)</span>
               </div>
-              <p className="leading-relaxed text-amber-900">
-                Pour protéger les données clients et activer vos permissions Firestore, veuillez cliquer sur le lien de vérification envoyé à votre adresse e-mail, puis actualisez ci-dessous.
+              <p className="text-emerald-900/90 leading-relaxed">
+                Entrez votre Nom, Prénom et Mot de passe : votre session reste active sur votre appareil sans avoir à vous réinscrire.
               </p>
             </div>
 
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label htmlFor="login-lastname" className="text-xs font-semibold text-slate-700">
+                  Nom *
+                </label>
+                <input
+                  id="login-lastname"
+                  type="text"
+                  required
+                  autoComplete="family-name"
+                  value={lastName}
+                  onChange={(e) => setLastName(e.target.value)}
+                  placeholder="Ex: ZEMBY"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-700"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label htmlFor="login-firstname" className="text-xs font-semibold text-slate-700">
+                  Prénom *
+                </label>
+                <input
+                  id="login-firstname"
+                  type="text"
+                  required
+                  autoComplete="given-name"
+                  value={firstName}
+                  onChange={(e) => setFirstName(e.target.value)}
+                  placeholder="Ex: Maliq"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-700"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <label htmlFor="login-password" className="text-xs font-semibold text-slate-700">
+                Mot de passe *
+              </label>
+              <div className="relative">
+                <input
+                  id="login-password"
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  minLength={6}
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-3 pr-10 py-2.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-700"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  aria-label={showPassword ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+                  className="absolute inset-y-0 right-2.5 flex items-center text-slate-500 hover:text-slate-800"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
             {error && (
-              <div className="bg-rose-50 border border-rose-200 text-rose-800 rounded-xl px-4 py-2.5 text-xs">
+              <div className="bg-rose-50 border border-rose-200 text-rose-800 rounded-xl px-4 py-2.5 text-xs leading-relaxed">
                 {error}
               </div>
             )}
 
-            {infoNotice && (
-              <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-xl px-4 py-2.5 text-xs">
-                {infoNotice}
-              </div>
-            )}
-
-            <div className="flex flex-col sm:flex-row gap-2.5">
-              <button
-                type="button"
-                disabled={loading}
-                onClick={handleCheckVerification}
-                className="flex-1 py-3 min-h-[44px] bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-xl flex items-center justify-center gap-2"
-              >
-                <RefreshCw className="w-4 h-4" />
-                <span>J'ai vérifié mon e-mail</span>
-              </button>
-              <button
-                type="button"
-                disabled={loading}
-                onClick={handleResendVerification}
-                className="py-3 px-4 min-h-[44px] bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold rounded-xl"
-              >
-                Renvoyer le lien
-              </button>
-            </div>
-          </div>
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-3 min-h-[48px] bg-slate-900 hover:bg-emerald-800 text-white text-sm font-semibold rounded-xl shadow-sm transition-colors flex items-center justify-center gap-2 disabled:opacity-60"
+            >
+              <KeyRound className="w-4 h-4" />
+              <span>{loading ? 'Connexion en cours...' : 'Se connecter'}</span>
+            </button>
+          </form>
         ) : (
-          <form onSubmit={handleCreateProfile} className="space-y-4">
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 flex items-center gap-3">
-              {googleUser.photoURL && (
-                <img
-                  src={googleUser.photoURL}
-                  alt={googleUser.displayName || 'Profil'}
-                  className="w-10 h-10 rounded-full object-cover"
-                  referrerPolicy="no-referrer"
+          <form onSubmit={handleRegisterSubmit} className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label htmlFor="reg-lastname" className="text-xs font-semibold text-slate-700">
+                  Nom *
+                </label>
+                <input
+                  id="reg-lastname"
+                  type="text"
+                  required
+                  autoComplete="family-name"
+                  value={lastName}
+                  onChange={(e) => setLastName(e.target.value)}
+                  placeholder="Ex: MBOUMBA"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-700"
                 />
-              )}
-              <div className="min-w-0">
-                <div className="text-xs font-bold text-slate-900 truncate">
-                  {googleUser.displayName || fullNameInput || googleUser.email}
-                </div>
-                <div className="text-[11px] text-slate-500 truncate">{googleUser.email}</div>
+              </div>
+
+              <div className="space-y-1">
+                <label htmlFor="reg-firstname" className="text-xs font-semibold text-slate-700">
+                  Prénom *
+                </label>
+                <input
+                  id="reg-firstname"
+                  type="text"
+                  required
+                  autoComplete="given-name"
+                  value={firstName}
+                  onChange={(e) => setFirstName(e.target.value)}
+                  placeholder="Ex: Jean"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-700"
+                />
               </div>
             </div>
 
-            {!isAdminEmail && (
-              <div className="space-y-2">
-                <label className="text-xs font-semibold text-slate-700 block">
-                  Type de compte
-                </label>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedRole('client')}
-                    className={`p-3 rounded-xl border text-left transition-colors ${
-                      selectedRole === 'client'
-                        ? 'bg-emerald-700 text-white border-emerald-700'
-                        : 'bg-white text-slate-800 border-slate-200 hover:bg-slate-50'
-                    }`}
-                  >
-                    <User className="w-4 h-4 mb-1" />
-                    <div className="text-xs font-bold">Client</div>
-                    <div
-                      className={`text-[10px] ${
-                        selectedRole === 'client' ? 'text-emerald-100' : 'text-slate-500'
-                      }`}
-                    >
-                      Accès immédiat
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setSelectedRole('manager')}
-                    className={`p-3 rounded-xl border text-left transition-colors ${
-                      selectedRole === 'manager'
-                        ? 'bg-emerald-700 text-white border-emerald-700'
-                        : 'bg-white text-slate-800 border-slate-200 hover:bg-slate-50'
-                    }`}
-                  >
-                    <Building2 className="w-4 h-4 mb-1" />
-                    <div className="text-xs font-bold">Entreprise</div>
-                    <div
-                      className={`text-[10px] ${
-                        selectedRole === 'manager' ? 'text-emerald-100' : 'text-slate-500'
-                      }`}
-                    >
-                      Validé par Admin
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setSelectedRole('agent')}
-                    className={`p-3 rounded-xl border text-left transition-colors ${
-                      selectedRole === 'agent'
-                        ? 'bg-emerald-700 text-white border-emerald-700'
-                        : 'bg-white text-slate-800 border-slate-200 hover:bg-slate-50'
-                    }`}
-                  >
-                    <Wrench className="w-4 h-4 mb-1" />
-                    <div className="text-xs font-bold">Agent</div>
-                    <div
-                      className={`text-[10px] ${
-                        selectedRole === 'agent' ? 'text-emerald-100' : 'text-slate-500'
-                      }`}
-                    >
-                      Technicien terrain
-                    </div>
-                  </button>
-                </div>
+            <div className="space-y-1">
+              <label htmlFor="reg-password" className="text-xs font-semibold text-slate-700">
+                Mot de passe * (6 caractères minimum)
+              </label>
+              <div className="relative">
+                <input
+                  id="reg-password"
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  minLength={6}
+                  autoComplete="new-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-3 pr-10 py-2.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-700"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  aria-label={showPassword ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+                  className="absolute inset-y-0 right-2.5 flex items-center text-slate-500 hover:text-slate-800"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
               </div>
-            )}
+            </div>
 
-            {selectedRole === 'manager' && !isAdminEmail && (
+            {/* Sélecteur de profil : Client, Entreprise ou Agent */}
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-slate-700 block">
+                Profil *
+              </label>
+              <div className="grid grid-cols-3 gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setSelectedRole('client')}
+                  className={`p-3 rounded-xl border text-left transition-colors ${
+                    selectedRole === 'client'
+                      ? 'bg-emerald-700 text-white border-emerald-700'
+                      : 'bg-white text-slate-800 border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  <User className="w-4 h-4 mb-1" />
+                  <div className="text-xs font-bold">Client</div>
+                  <div
+                    className={`text-[10px] ${
+                      selectedRole === 'client' ? 'text-emerald-100' : 'text-slate-500'
+                    }`}
+                  >
+                    Accès immédiat
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setSelectedRole('manager')}
+                  className={`p-3 rounded-xl border text-left transition-colors ${
+                    selectedRole === 'manager'
+                      ? 'bg-emerald-700 text-white border-emerald-700'
+                      : 'bg-white text-slate-800 border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  <Building2 className="w-4 h-4 mb-1" />
+                  <div className="text-xs font-bold">Entreprise</div>
+                  <div
+                    className={`text-[10px] ${
+                      selectedRole === 'manager' ? 'text-emerald-100' : 'text-slate-500'
+                    }`}
+                  >
+                    Validé par Admin
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setSelectedRole('agent')}
+                  className={`p-3 rounded-xl border text-left transition-colors ${
+                    selectedRole === 'agent'
+                      ? 'bg-emerald-700 text-white border-emerald-700'
+                      : 'bg-white text-slate-800 border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  <Wrench className="w-4 h-4 mb-1" />
+                  <div className="text-xs font-bold">Agent</div>
+                  <div
+                    className={`text-[10px] ${
+                      selectedRole === 'agent' ? 'text-emerald-100' : 'text-slate-500'
+                    }`}
+                  >
+                    Terrain GPS
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            {/* Champ dynamique Nom de l'entreprise (uniquement si Entreprise sélectionné) */}
+            {selectedRole === 'manager' && (
               <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-4 space-y-3">
                 <div className="text-xs font-bold text-amber-950">
-                  Inscription Entreprise (soumise à validation administrateur)
+                  Informations Entreprise (soumises à validation administrateur)
                 </div>
                 <div className="space-y-1">
                   <label htmlFor="comp-name" className="text-xs font-semibold text-slate-700">
@@ -682,15 +593,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 </div>
                 <div className="space-y-1">
                   <label htmlFor="comp-desc" className="text-xs font-semibold text-slate-700">
-                    Description des services proposés *
+                    Description des services (optionnel)
                   </label>
                   <textarea
                     id="comp-desc"
-                    rows={3}
-                    required
+                    rows={2}
                     value={companyDescription}
                     onChange={(e) => setCompanyDescription(e.target.value)}
-                    placeholder="Décrivez vos spécialités (ex: Nettoyage BTP, canapés, lavage auto à Akanda...)"
+                    placeholder="Ex: Nettoyage BTP, canapés, lavage auto à Akanda..."
                     className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-700"
                   />
                 </div>
@@ -700,7 +610,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1">
                 <label htmlFor="onb-phone" className="text-xs font-semibold text-slate-700">
-                  Numéro WhatsApp (format international) *
+                  Numéro WhatsApp *
                 </label>
                 <input
                   id="onb-phone"
@@ -722,11 +632,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 {phoneTouched && !isPhoneValid ? (
                   <p className="text-[11px] text-rose-600 flex items-center gap-1">
                     <AlertCircle className="w-3 h-3 shrink-0" />
-                    <span>Indicatif international requis (ex: +241 065 96 12 38)</span>
+                    <span>Indicatif requis (ex: +241 065 96 12 38)</span>
                   </p>
                 ) : (
                   <p className="text-[11px] text-slate-500">
-                    Obligatoire · Indicatif Gabon (+241) ou international
+                    Indicatif Gabon (+241) ou international
                   </p>
                 )}
               </div>
@@ -776,18 +686,18 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             </div>
 
             {error && (
-              <div className="bg-rose-50 border border-rose-200 text-rose-800 rounded-xl px-4 py-2.5 text-xs">
+              <div className="bg-rose-50 border border-rose-200 text-rose-800 rounded-xl px-4 py-2.5 text-xs leading-relaxed">
                 {error}
               </div>
             )}
 
             <button
               type="submit"
-              disabled={!canSubmit}
-              className="w-full py-3 min-h-[44px] bg-emerald-700 hover:bg-emerald-800 disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed text-white text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-2"
+              disabled={loading || !canRegister}
+              className="w-full py-3 min-h-[46px] bg-emerald-700 hover:bg-emerald-800 disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed text-white text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-2"
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span>Enregistrer mon compte</span>
+              <span>{loading ? 'Création du compte...' : 'Créer mon compte'}</span>
             </button>
           </form>
         )}

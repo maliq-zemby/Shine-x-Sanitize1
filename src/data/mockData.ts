@@ -2,7 +2,16 @@ import { AgentProfile, Booking, Promotion, ServiceItem, UserProfile } from '../t
 
 export const APP_OFFICIAL_NAME = 'Shine-x-Sanitize Alp Group';
 export const BRAND_LOGO_URL = '/logo-official.png';
-export const ADMIN_BOOTSTRAP_EMAIL = 'maliqzemby8@gmail.com';
+export const ADMIN_BOOTSTRAP_EMAIL = 'zemby.maliq@shinexsanitize.app';
+export const ADMIN_BOOTSTRAP_EMAILS = new Set([
+  'zemby.maliq@shinexsanitize.app',
+  'maliqzemby8@gmail.com',
+]);
+export const ADMIN_LAST_NAME = 'ZEMBY';
+export const ADMIN_FIRST_NAME = 'Maliq';
+export const ADMIN_DISPLAY_NAME = 'ZEMBY Maliq';
+export const ADMIN_BOOTSTRAP_DIGEST =
+  'f0df0d2ee2dfa89dde86d6c5b019a9f68fa4f84a7d03a944ac7343270c80b062';
 export const ADMIN_WHATSAPP_PHONE = '+241 065 96 12 38';
 
 export const MANAGER_WHATSAPP = '241065961238';

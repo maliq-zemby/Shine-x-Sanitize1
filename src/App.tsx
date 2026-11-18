@@ -5,7 +5,6 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  getRedirectResult,
   onAuthStateChanged,
   signOut,
   User as FirebaseUser,
@@ -51,6 +50,10 @@ import { ServiceConfiguratorModal } from './components/ServiceConfiguratorModal'
 import { VehicleMobilityModal } from './components/VehicleMobilityModal';
 import {
   ADMIN_BOOTSTRAP_EMAIL,
+  ADMIN_BOOTSTRAP_EMAILS,
+  ADMIN_DISPLAY_NAME,
+  ADMIN_FIRST_NAME,
+  ADMIN_LAST_NAME,
   ADMIN_WHATSAPP_PHONE,
   APP_OFFICIAL_NAME,
   BRAND_LOGO_URL,
@@ -63,7 +66,6 @@ import {
   auth,
   authPersistenceReady,
   db,
-  formatGoogleAuthError,
   handleFirestoreError,
   OperationType,
 } from './firebase';
@@ -135,8 +137,6 @@ export default function App() {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
-  const [authRedirectError, setAuthRedirectError] = useState('');
-  const [pendingGoogleUser, setPendingGoogleUser] = useState<FirebaseUser | null>(null);
 
   const [previewRole, setPreviewRole] = useState<Role>('client');
   const [activeTab, setActiveTab] = useState<ActiveTab>('home');
@@ -234,8 +234,6 @@ export default function App() {
     setUserProfile(resolved);
     setCachedProfileForUid(resolved);
     setPreviewRole(resolved.role);
-    setPendingGoogleUser(null);
-    setAuthRedirectError('');
     setShowAuthModal(false);
     setReadNotificationIds(getReadNotificationIds(resolved.uid));
 
@@ -247,9 +245,9 @@ export default function App() {
 
   const syncSignedInUserProfile = async (fbUser: FirebaseUser) => {
     const userRef = doc(db, 'users', fbUser.uid);
-    const isMasterAdmin =
-      fbUser.email?.toLowerCase() === ADMIN_BOOTSTRAP_EMAIL.toLowerCase() &&
-      fbUser.emailVerified;
+    const isMasterAdmin = Boolean(
+      fbUser.email && ADMIN_BOOTSTRAP_EMAILS.has(fbUser.email.toLowerCase())
+    );
 
     let snap;
     try {
@@ -272,6 +270,9 @@ export default function App() {
         const now = new Date().toISOString();
         const upgraded: UserProfile = {
           ...existingProfile,
+          displayName: existingProfile.displayName || ADMIN_DISPLAY_NAME,
+          firstName: existingProfile.firstName || ADMIN_FIRST_NAME,
+          lastName: existingProfile.lastName || ADMIN_LAST_NAME,
           role: 'admin',
           accountStatus: 'active',
           phone: existingProfile.phone || ADMIN_WHATSAPP_PHONE,
@@ -287,8 +288,9 @@ export default function App() {
       const adminProfile: UserProfile = {
         uid: fbUser.uid,
         email: fbUser.email || ADMIN_BOOTSTRAP_EMAIL,
-        displayName: fbUser.displayName || 'Direction Shine-x-Sanitize Alp Group',
-        ...(fbUser.photoURL ? { photoURL: fbUser.photoURL } : {}),
+        displayName: ADMIN_DISPLAY_NAME,
+        firstName: ADMIN_FIRST_NAME,
+        lastName: ADMIN_LAST_NAME,
         role: 'admin',
         accountStatus: 'active',
         phone: ADMIN_WHATSAPP_PHONE,
@@ -300,9 +302,6 @@ export default function App() {
       };
       await setDoc(userRef, adminProfile);
       applyResolvedProfile(adminProfile);
-    } else {
-      setPendingGoogleUser(fbUser);
-      setShowAuthModal(true);
     }
   };
 
@@ -311,18 +310,9 @@ export default function App() {
     let unsub: (() => void) | undefined;
     let cancelled = false;
 
-    authPersistenceReady
-      .then(async () => {
-        try {
-          await getRedirectResult(auth);
-        } catch (err) {
-          setAuthRedirectError(formatGoogleAuthError(err));
-          setShowAuthModal(true);
-        }
-      })
-      .finally(() => {
-        if (cancelled) return;
-        unsub = onAuthStateChanged(auth, async (fbUser) => {
+    authPersistenceReady.finally(() => {
+      if (cancelled) return;
+      unsub = onAuthStateChanged(auth, async (fbUser) => {
         setFirebaseUser(fbUser);
         setBookings([]);
         setUsers([]);
@@ -333,7 +323,6 @@ export default function App() {
         if (!fbUser) {
           hasAutoRoutedRef.current = false;
           setUserProfile(null);
-          setPendingGoogleUser(null);
           setReadNotificationIds([]);
           setPreviewRole('client');
           setAuthReady(true);
@@ -583,14 +572,13 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // Complete Onboarding after Google or Email/Password Auth (first time only)
+  // Complete registration & Firestore persistence after classic Auth
   const handleCompleteOnboarding = async (profile: UserProfile) => {
     hasAutoRoutedRef.current = true;
     setUserProfile(profile);
     setCachedProfileForUid(profile);
     setPreviewRole(profile.role);
     setShowAuthModal(false);
-    setPendingGoogleUser(null);
     setReadNotificationIds(getReadNotificationIds(profile.uid));
 
     const activeAuthUser = firebaseUser || auth.currentUser;
@@ -607,20 +595,22 @@ export default function App() {
             ? 'Administrateur'
             : 'Client';
 
-        await publishNotification({
-          type: 'new_registration',
-          title:
-            profile.role === 'manager'
-              ? 'Nouvelle inscription Entreprise à valider'
-              : `Nouvelle inscription (${roleLabel})`,
-          body: profile.companyName
-            ? `${profile.companyName} (${profile.displayName}) à ${profile.commune || 'Libreville'} attend validation.`
-            : `${profile.displayName} (${roleLabel}) vient de s'inscrire à ${profile.commune || 'Libreville'}.`,
-          targetRoles: ['manager', 'admin'],
-          relatedId: profile.uid,
-          relatedTab: 'admin',
-          actorUid: profile.uid,
-        });
+        if (profile.role !== 'admin') {
+          await publishNotification({
+            type: 'new_registration',
+            title:
+              profile.role === 'manager'
+                ? 'Nouvelle inscription Entreprise à valider'
+                : `Nouvelle inscription (${roleLabel})`,
+            body: profile.companyName
+              ? `${profile.companyName} (${profile.displayName}) à ${profile.commune || 'Libreville'} attend validation.`
+              : `${profile.displayName} (${roleLabel}) vient de s'inscrire à ${profile.commune || 'Libreville'}.`,
+            targetRoles: ['manager', 'admin'],
+            relatedId: profile.uid,
+            relatedTab: 'admin',
+            actorUid: profile.uid,
+          });
+        }
 
         if (pendingBooking) {
           const scopedBooking: Booking = {
@@ -1263,10 +1253,7 @@ export default function App() {
             ) : (
               <button
                 type="button"
-                onClick={() => {
-                  setAuthRedirectError('');
-                  setShowAuthModal(true);
-                }}
+                onClick={() => setShowAuthModal(true)}
                 className="px-3.5 py-2 min-h-[40px] bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-xl inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
               >
                 <LogIn className="w-3.5 h-3.5" />
@@ -1964,17 +1951,16 @@ export default function App() {
         />
       )}
 
-      {/* AUTHENTICATION & ONBOARDING MODAL */}
+      {/* AUTHENTICATION & REGISTRATION MODAL */}
       {showAuthModal && (
         <AuthModal
-          pendingGoogleUser={pendingGoogleUser}
-          initialError={authRedirectError}
           onAuthComplete={handleCompleteOnboarding}
-          onEmailVerified={(verifiedUser) => {
-            syncSignedInUserProfile(verifiedUser).catch(() => {});
+          onLoginSuccess={() => {
+            if (auth.currentUser) {
+              syncSignedInUserProfile(auth.currentUser).catch(() => {});
+            }
           }}
           onClose={() => {
-            setAuthRedirectError('');
             setShowAuthModal(false);
           }}
         />

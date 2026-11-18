@@ -18,11 +18,11 @@ service cloud.firestore {
     }
 
     function isSignedIn() {
-      return request.auth != null && request.auth.token.email_verified == true;
+      return request.auth != null;
     }
 
     function isBootstrappedAdmin() {
-      return isSignedIn() && request.auth.token.email == 'maliqzemby8@gmail.com';
+      return isSignedIn() && request.auth.token.email in ['zemby.maliq@shinexsanitize.app', 'maliqzemby8@gmail.com'];
     }
 
     function hasUserDoc() {
@@ -63,10 +63,12 @@ service cloud.firestore {
 
     function isValidUserProfile(data) {
       return data.keys().hasAll(['uid', 'email', 'displayName', 'role', 'accountStatus', 'phone', 'acceptedTerms', 'acceptedTermsAt', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['uid', 'email', 'displayName', 'photoURL', 'role', 'accountStatus', 'phone', 'acceptedTerms', 'acceptedTermsAt', 'companyName', 'companyDescription', 'commune', 'banReason', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'displayName', 'firstName', 'lastName', 'photoURL', 'role', 'accountStatus', 'phone', 'acceptedTerms', 'acceptedTermsAt', 'companyName', 'companyDescription', 'commune', 'banReason', 'createdAt', 'updatedAt'])
         && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$')
         && data.email is string && data.email.size() >= 3 && data.email.size() <= 160
         && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120
+        && (!('firstName' in data) || (data.firstName is string && data.firstName.size() <= 80))
+        && (!('lastName' in data) || (data.lastName is string && data.lastName.size() <= 80))
         && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 500))
         && data.role in ['client', 'agent', 'manager', 'admin']
         && data.accountStatus in ['active', 'pending', 'rejected', 'banned']
@@ -188,7 +190,7 @@ service cloud.firestore {
           && incoming().role == existing().role
           && incoming().accountStatus == existing().accountStatus
           && incoming().createdAt == existing().createdAt
-          && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'phone', 'companyName', 'companyDescription', 'commune', 'updatedAt'])
+          && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'firstName', 'lastName', 'photoURL', 'phone', 'companyName', 'companyDescription', 'commune', 'updatedAt'])
         )
       );
       allow delete: if isAdmin();
