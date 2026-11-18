@@ -9,7 +9,7 @@ import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
 import appletConfig from '../firebase-applet-config.json';
 import { ADMIN_BOOTSTRAP_DIGEST } from './data/mockData';
 
-// Source of truth: firebase-applet-config.json (Firebase project created by AI Studio).
+// Source of truth: firebase-applet-config.json (Firebase project "shinexsanitize2").
 // Optional VITE_FIREBASE_* variables can replace it, but only as a complete set
 // (at least API key + project ID) so a key from one project is never mixed with
 // the identifiers of another one.
@@ -31,13 +31,13 @@ const firebaseConfig: FirebaseOptions = useEnvConfig
       apiKey: appletConfig.apiKey,
       authDomain: appletConfig.authDomain,
       projectId: appletConfig.projectId,
-      storageBucket: appletConfig.storageBucket,
-      messagingSenderId: appletConfig.messagingSenderId,
-      appId: appletConfig.appId,
+      storageBucket: appletConfig.storageBucket || undefined,
+      messagingSenderId: appletConfig.messagingSenderId || undefined,
+      appId: appletConfig.appId || undefined,
       measurementId: appletConfig.measurementId || undefined,
     };
 
-// The AI Studio project stores its data in a named Firestore database, not "(default)".
+// Firestore database ID comes from the config ("(default)" unless a named database is set).
 const firestoreDatabaseId = useEnvConfig
   ? env.VITE_FIREBASE_DATABASE_ID || '(default)'
   : appletConfig.firestoreDatabaseId || '(default)';
