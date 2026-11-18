@@ -788,10 +788,23 @@ export default function App() {
 
   const handleRefuseOrder = (bookingId: string, reason: string) => {
     persistBookingPatch(bookingId, {
-      status: 'cancelled',
+      status: 'rejected',
       gpsActive: false,
-      rejectionReason: reason,
+      clientGpsActive: false,
+      assignedAgents: [],
+      rejectionReason: reason.trim() || 'Votre commande a été refusée par le gérant.',
     });
+  };
+
+  const handleDeleteOrder = async (bookingId: string) => {
+    setBookings((prev) => prev.filter((b) => b.id !== bookingId));
+    if (firebaseUser && !isAccountBanned) {
+      try {
+        await deleteDoc(doc(db, 'bookings', bookingId));
+      } catch (error) {
+        handleFirestoreError(error, OperationType.DELETE, `bookings/${bookingId}`);
+      }
+    }
   };
 
   const handleUpdatePrice = (bookingId: string, newPrice: number, note: string) => {
@@ -1876,6 +1889,7 @@ export default function App() {
             companyDisplayName={userProfile?.companyName || APP_OFFICIAL_NAME}
             onValidateOrder={handleValidateOrder}
             onRefuseOrder={handleRefuseOrder}
+            onDeleteOrder={handleDeleteOrder}
             onUpdatePrice={handleUpdatePrice}
             onAssignAgents={handleAssignAgents}
             onUpdateServiceBasePrice={handleUpdateServiceBasePrice}

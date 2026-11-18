@@ -119,7 +119,7 @@ service cloud.firestore {
         && (!('managerCounterPrice' in data) || data.managerCounterPrice is number)
         && (!('priceAdjustmentNote' in data) || (data.priceAdjustmentNote is string && data.priceAdjustmentNote.size() <= 300))
         && data.finalPrice is number && data.finalPrice >= 1000
-        && data.status in ['pending_negotiation', 'counter_offered', 'confirmed', 'in_transit', 'in_progress', 'completed', 'cancelled']
+        && data.status in ['pending_negotiation', 'counter_offered', 'confirmed', 'in_transit', 'in_progress', 'completed', 'rejected', 'cancelled']
         && (!('rejectionReason' in data) || (data.rejectionReason is string && data.rejectionReason.size() <= 300))
         && data.assignedAgents is list && data.assignedAgents.size() <= 10 && (data.assignedAgents.size() == 0 || data.assignedAgents[0] is string)
         && data.gpsActive is bool
@@ -220,8 +220,8 @@ service cloud.firestore {
           isAdmin()
           || (
             isActiveManager()
-            && !(existing().status in ['completed', 'cancelled'])
-            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'managerCounterPrice', 'priceAdjustmentNote', 'finalPrice', 'rejectionReason', 'assignedAgents', 'agentGps', 'updatedAt'])
+            && !(existing().status in ['completed', 'rejected', 'cancelled'])
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'managerCounterPrice', 'priceAdjustmentNote', 'finalPrice', 'rejectionReason', 'assignedAgents', 'gpsActive', 'clientGpsActive', 'agentGps', 'updatedAt'])
           )
           || (
             isActiveAgent()
@@ -231,7 +231,7 @@ service cloud.firestore {
           )
           || (
             existing().ownerUid == request.auth.uid
-            && existing().status != 'cancelled'
+            && !(existing().status in ['rejected', 'cancelled'])
             && incoming().finalPrice == existing().finalPrice
             && (
               (incoming().diff(existing()).affectedKeys().hasOnly(['clientGpsActive', 'clientCoords', 'updatedAt']))
@@ -240,7 +240,7 @@ service cloud.firestore {
             )
           )
         );
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() || isActiveManager();
     }
 
     match /promotions/{promoId} {

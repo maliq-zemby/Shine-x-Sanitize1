@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   AlertTriangle,
   Camera,
   CheckCircle2,
+  EyeOff,
   LocateFixed,
   MapPin,
   MessageCircle,
@@ -32,8 +33,12 @@ const STATUS_LABELS: Record<Booking['status'], string> = {
   in_transit: 'Agent en route · GPS en direct',
   in_progress: 'Intervention en cours sur place',
   completed: 'Intervention terminée',
-  cancelled: 'Commande refusée / annulée',
+  rejected: 'Commande refusée par le gérant',
+  cancelled: 'Commande annulée',
 };
+
+const isTrackableBooking = (b: Booking) =>
+  b.status !== 'rejected' && b.status !== 'cancelled' && b.status !== 'completed';
 
 export const ClientReservationsView: React.FC<ClientReservationsViewProps> = ({
   bookings,
@@ -44,15 +49,39 @@ export const ClientReservationsView: React.FC<ClientReservationsViewProps> = ({
   onToggleClientGps,
   onOpenCatalog,
 }) => {
+  const activeTrackableBookings = bookings.filter(isTrackableBooking);
   const [selectedGpsBookingId, setSelectedGpsBookingId] = useState<string | null>(
-    bookings.find((b) => b.gpsActive || b.clientGpsActive || b.status === 'in_transit')?.id ||
-      bookings[0]?.id ||
+    activeTrackableBookings.find(
+      (b) => b.gpsActive || b.clientGpsActive || b.status === 'in_transit'
+    )?.id ||
+      activeTrackableBookings[0]?.id ||
       null
+  );
+  const [showMap, setShowMap] = useState<boolean>(
+    () => bookings.some(isTrackableBooking)
   );
   const [whatsappTarget, setWhatsappTarget] = useState<Booking | null>(null);
   const [reviewDrafts, setReviewDrafts] = useState<Record<string, { rating: number; text: string }>>({});
   const [openReviewId, setOpenReviewId] = useState<string | null>(null);
   const [gpsNotice, setGpsNotice] = useState<string>('');
+
+  // Fermeture automatique de la carte GPS dès que la commande est refusée, purgée ou n'est plus active
+  useEffect(() => {
+    const activeList = bookings.filter(isTrackableBooking);
+    if (activeList.length === 0) {
+      setSelectedGpsBookingId(null);
+      setShowMap(false);
+      return;
+    }
+
+    if (selectedGpsBookingId) {
+      const focused = bookings.find((b) => b.id === selectedGpsBookingId);
+      if (!focused || !isTrackableBooking(focused)) {
+        setSelectedGpsBookingId(null);
+        setShowMap(false);
+      }
+    }
+  }, [bookings, selectedGpsBookingId]);
 
   const handleSaveReview = (bookingId: string) => {
     const draft = reviewDrafts[bookingId] || { rating: 5, text: '' };
@@ -62,7 +91,9 @@ export const ClientReservationsView: React.FC<ClientReservationsViewProps> = ({
   };
 
   const handleActivateClientGps = (booking: Booking) => {
+    if (!isTrackableBooking(booking)) return;
     setSelectedGpsBookingId(booking.id);
+    setShowMap(true);
     if (booking.clientGpsActive) {
       onToggleClientGps(booking.id);
       setGpsNotice(`Partage GPS client désactivé pour ${booking.id}.`);
@@ -109,14 +140,6 @@ export const ClientReservationsView: React.FC<ClientReservationsViewProps> = ({
             Activez votre GPS client, suivez vos agents en temps réel, contactez le gérant sur WhatsApp en cas de problème ou laissez un commentaire.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={onOpenCatalog}
-          className="px-4 py-2.5 min-h-[44px] bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-2 shrink-0"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Nouvelle Prestation</span>
-        </button>
       </div>
 
       {gpsNotice && (
@@ -177,17 +200,49 @@ export const ClientReservationsView: React.FC<ClientReservationsViewProps> = ({
         </div>
       ) : (
         <>
-          {/* Live Multi-User GPS Map */}
-          <LiveGpsMap
-            bookings={bookings}
-            selectedBookingId={selectedGpsBookingId}
-            onSelectBooking={setSelectedGpsBookingId}
-            title="Suivi GPS Multi-utilisateurs — Mes Réservations"
-          />
+          {/* Live Multi-User GPS Map (auto-closed when no active/trackable booking remains) */}
+          {showMap && activeTrackableBookings.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowMap(false)}
+                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-semibold rounded-lg inline-flex items-center gap-1.5"
+                >
+                  <EyeOff className="w-3.5 h-3.5" />
+                  <span>Masquer la carte GPS</span>
+                </button>
+              </div>
+              <LiveGpsMap
+                bookings={activeTrackableBookings}
+                selectedBookingId={selectedGpsBookingId}
+                onSelectBooking={setSelectedGpsBookingId}
+                title="Suivi GPS Multi-utilisateurs — Mes Réservations"
+              />
+            </div>
+          )}
+
+          {!showMap && activeTrackableBookings.length > 0 && (
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedGpsBookingId(activeTrackableBookings[0].id);
+                  setShowMap(true);
+                }}
+                className="px-4 py-2 bg-slate-900 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl inline-flex items-center gap-2"
+              >
+                <Navigation className="w-3.5 h-3.5" />
+                <span>Afficher le suivi GPS en direct</span>
+              </button>
+            </div>
+          )}
 
           {/* Reservations List */}
           <div className="space-y-4">
         {bookings.map((booking) => {
+          const isRefusedOrCancelled =
+            booking.status === 'rejected' || booking.status === 'cancelled';
           const draft = reviewDrafts[booking.id] || {
             rating: booking.rating || 5,
             text: booking.review || '',
@@ -224,12 +279,12 @@ export const ClientReservationsView: React.FC<ClientReservationsViewProps> = ({
                   {booking.status === 'completed' && (
                     <CheckCircle2 className="w-4 h-4 text-emerald-700" />
                   )}
-                  {booking.status === 'cancelled' && (
+                  {(booking.status === 'rejected' || booking.status === 'cancelled') && (
                     <AlertTriangle className="w-4 h-4 text-rose-600" />
                   )}
                   <span
                     className={
-                      booking.status === 'cancelled'
+                      booking.status === 'rejected' || booking.status === 'cancelled'
                         ? 'text-rose-700'
                         : booking.status === 'counter_offered'
                         ? 'text-amber-700'
@@ -240,6 +295,29 @@ export const ClientReservationsView: React.FC<ClientReservationsViewProps> = ({
                   </span>
                 </div>
               </div>
+
+              {isRefusedOrCancelled && (
+                <div
+                  role="status"
+                  className="bg-rose-50 border border-rose-200 rounded-xl p-4 space-y-1.5 text-xs text-rose-950"
+                >
+                  <div className="font-bold flex items-center gap-2 text-rose-800">
+                    <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span>
+                      {booking.status === 'rejected'
+                        ? 'Votre commande a été refusée par le gérant'
+                        : 'Cette commande a été annulée'}
+                    </span>
+                  </div>
+                  <p className="text-rose-900 leading-relaxed">
+                    {booking.rejectionReason ||
+                      "Le gérant n'a pas pu valider cette intervention. Le suivi GPS en direct a été automatiquement désactivé."}
+                  </p>
+                  <p className="text-[11px] text-rose-700">
+                    Vous pouvez contacter le gérant sur WhatsApp pour plus d'informations ou créer une nouvelle réservation.
+                  </p>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
                 <div className="bg-slate-50 p-4 rounded-xl space-y-1.5">
@@ -289,18 +367,32 @@ export const ClientReservationsView: React.FC<ClientReservationsViewProps> = ({
 
                 <div className="bg-slate-50 p-4 rounded-xl space-y-2 flex flex-col justify-between">
                   <div>
-                    <div className="font-semibold text-slate-700">Agents désignés & GPS Client</div>
-                    <div className="text-slate-900 font-medium mt-1">
-                      {booking.assignedAgents.length > 0
-                        ? booking.assignedAgents.join(', ')
-                        : 'En attente de désignation par le gérant'}
+                    <div className="font-semibold text-slate-700">
+                      {isRefusedOrCancelled ? 'Statut de suivi' : 'Agents désignés & GPS Client'}
                     </div>
-                    <div className="text-[11px] text-slate-600 mt-1">
-                      Mon GPS client :{' '}
-                      <strong className={booking.clientGpsActive ? 'text-emerald-700' : 'text-slate-700'}>
-                        {booking.clientGpsActive ? 'Activé (synchronisé)' : 'Inactif'}
-                      </strong>
-                    </div>
+                    {isRefusedOrCancelled ? (
+                      <div className="text-rose-700 font-medium mt-1">
+                        Suivi en direct arrêté suite au refus de la commande.
+                      </div>
+                    ) : (
+                      <>
+                        <div className="text-slate-900 font-medium mt-1">
+                          {booking.assignedAgents.length > 0
+                            ? booking.assignedAgents.join(', ')
+                            : 'En attente de désignation par le gérant'}
+                        </div>
+                        <div className="text-[11px] text-slate-600 mt-1">
+                          Mon GPS client :{' '}
+                          <strong
+                            className={
+                              booking.clientGpsActive ? 'text-emerald-700' : 'text-slate-700'
+                            }
+                          >
+                            {booking.clientGpsActive ? 'Activé (synchronisé)' : 'Inactif'}
+                          </strong>
+                        </div>
+                      </>
+                    )}
                   </div>
 
                   {booking.status === 'counter_offered' && (
@@ -436,39 +528,44 @@ export const ClientReservationsView: React.FC<ClientReservationsViewProps> = ({
                 </div>
               )}
 
-              {/* Action Bar for Client: Activate Client GPS, Focus Map, WhatsApp Gérant, Review */}
+              {/* Action Bar for Client: Activate Client GPS (active orders only), Focus Map, WhatsApp Gérant, Review */}
               <div className="flex flex-wrap items-center gap-2.5 pt-2 border-t border-slate-100">
-                {booking.status !== 'completed' && booking.status !== 'cancelled' && (
-                  <button
-                    type="button"
-                    onClick={() => handleActivateClientGps(booking)}
-                    className={`px-4 py-2.5 min-h-[44px] text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-2 ${
-                      booking.clientGpsActive
-                        ? 'bg-amber-400 hover:bg-amber-300 text-slate-950'
-                        : 'bg-slate-900 hover:bg-emerald-700 text-white'
-                    }`}
-                  >
-                    <LocateFixed className="w-3.5 h-3.5" />
-                    <span>
-                      {booking.clientGpsActive
-                        ? 'GPS Client Actif (Partagé)'
-                        : 'Activer mon GPS Client'}
-                    </span>
-                  </button>
-                )}
+                {isTrackableBooking(booking) && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => handleActivateClientGps(booking)}
+                      className={`px-4 py-2.5 min-h-[44px] text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-2 ${
+                        booking.clientGpsActive
+                          ? 'bg-amber-400 hover:bg-amber-300 text-slate-950'
+                          : 'bg-slate-900 hover:bg-emerald-700 text-white'
+                      }`}
+                    >
+                      <LocateFixed className="w-3.5 h-3.5" />
+                      <span>
+                        {booking.clientGpsActive
+                          ? 'GPS Client Actif (Partagé)'
+                          : 'Activer mon GPS Client'}
+                      </span>
+                    </button>
 
-                <button
-                  type="button"
-                  onClick={() => setSelectedGpsBookingId(booking.id)}
-                  className={`px-4 py-2.5 min-h-[44px] text-xs font-semibold rounded-xl border transition-colors inline-flex items-center gap-2 ${
-                    selectedGpsBookingId === booking.id
-                      ? 'bg-emerald-50 text-emerald-900 border-emerald-300'
-                      : 'bg-white text-slate-800 border-slate-200 hover:bg-slate-50'
-                  }`}
-                >
-                  <Navigation className="w-3.5 h-3.5" />
-                  <span>Centrer sur la carte</span>
-                </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedGpsBookingId(booking.id);
+                        setShowMap(true);
+                      }}
+                      className={`px-4 py-2.5 min-h-[44px] text-xs font-semibold rounded-xl border transition-colors inline-flex items-center gap-2 ${
+                        showMap && selectedGpsBookingId === booking.id
+                          ? 'bg-emerald-50 text-emerald-900 border-emerald-300'
+                          : 'bg-white text-slate-800 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      <Navigation className="w-3.5 h-3.5" />
+                      <span>Centrer sur la carte</span>
+                    </button>
+                  </>
+                )}
 
                 <button
                   type="button"

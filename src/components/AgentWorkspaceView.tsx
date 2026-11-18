@@ -58,6 +58,7 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
   const agentMissions = bookings.filter(
     (b) =>
       b.status !== 'cancelled' &&
+      b.status !== 'rejected' &&
       (b.assignedAgents.includes(agentName) ||
         b.assignedAgents.length > 0 ||
         b.status === 'confirmed' ||

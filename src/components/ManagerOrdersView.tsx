@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   AlertTriangle,
   Check,
@@ -11,6 +11,7 @@ import {
   Navigation,
   Plus,
   Tag,
+  Trash2,
   Users,
   XCircle,
 } from 'lucide-react';
@@ -26,6 +27,7 @@ interface ManagerOrdersViewProps {
   companyDisplayName?: string;
   onValidateOrder: (bookingId: string) => void;
   onRefuseOrder: (bookingId: string, reason: string) => void;
+  onDeleteOrder: (bookingId: string) => void;
   onUpdatePrice: (bookingId: string, newPrice: number, note: string) => void;
   onAssignAgents: (bookingId: string, agents: string[]) => void;
   onUpdateServiceBasePrice: (serviceId: string, newBasePrice: number) => void;
@@ -40,6 +42,7 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
   companyDisplayName = 'Shine-x-Sanitize Alp Group',
   onValidateOrder,
   onRefuseOrder,
+  onDeleteOrder,
   onUpdatePrice,
   onAssignAgents,
   onUpdateServiceBasePrice,
@@ -47,8 +50,13 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
 }) => {
   const [subTab, setSubTab] = useState<'orders' | 'pricing' | 'promos'>('orders');
   const [selectedMapBookingId, setSelectedMapBookingId] = useState<string | null>(
-    bookings.find((b) => b.gpsActive || b.clientGpsActive || b.status === 'in_transit')?.id ||
-      bookings[0]?.id ||
+    bookings.find(
+      (b) =>
+        b.status !== 'rejected' &&
+        b.status !== 'cancelled' &&
+        (b.gpsActive || b.clientGpsActive || b.status === 'in_transit')
+    )?.id ||
+      bookings.find((b) => b.status !== 'rejected' && b.status !== 'cancelled')?.id ||
       null
   );
   const [editingPriceId, setEditingPriceId] = useState<string | null>(null);
@@ -57,6 +65,11 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
   const [assigningBookingId, setAssigningBookingId] = useState<string | null>(null);
   const [assignError, setAssignError] = useState<Record<string, string>>({});
   const [customAgentDraft, setCustomAgentDraft] = useState<Record<string, string>>({});
+  const [refusingBookingId, setRefusingBookingId] = useState<string | null>(null);
+  const [refusalReasonDraft, setRefusalReasonDraft] = useState<string>(
+    'Commande refusée par le gérant : créneau ou tarif non disponible.'
+  );
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [whatsappClientBooking, setWhatsappClientBooking] = useState<Booking | null>(null);
 
   // Real-time base price drafts
@@ -71,10 +84,28 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
   const [promoValidUntil, setPromoValidUntil] = useState('31 Décembre 2026');
   const [promoNotice, setPromoNotice] = useState('');
 
-  const activeGpsCount = bookings.filter((b) => b.gpsActive || b.clientGpsActive).length;
+  useEffect(() => {
+    if (!selectedMapBookingId) return;
+    const focused = bookings.find((b) => b.id === selectedMapBookingId);
+    if (
+      !focused ||
+      focused.status === 'rejected' ||
+      focused.status === 'cancelled' ||
+      focused.status === 'completed'
+    ) {
+      const nextActive = bookings.find(
+        (b) => b.status !== 'rejected' && b.status !== 'cancelled' && b.status !== 'completed'
+      );
+      setSelectedMapBookingId(nextActive?.id || null);
+    }
+  }, [bookings, selectedMapBookingId]);
+
+  const activeGpsCount = bookings.filter(
+    (b) => b.status !== 'rejected' && b.status !== 'cancelled' && (b.gpsActive || b.clientGpsActive)
+  ).length;
   const pendingCount = bookings.filter((b) => b.status === 'pending_negotiation').length;
   const confirmedRevenue = bookings
-    .filter((b) => b.status !== 'cancelled')
+    .filter((b) => b.status !== 'cancelled' && b.status !== 'rejected')
     .reduce((sum, b) => sum + b.finalPrice, 0);
 
   const getBusyBookingForAgent = (agentName: string, currentBookingId: string): Booking | undefined =>
@@ -463,57 +494,114 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
                     </div>
                   )}
 
-                  <div className="flex flex-wrap items-center gap-2.5 pt-2 border-t border-slate-100">
-                    {booking.status !== 'cancelled' && booking.status !== 'completed' && (
-                      <>
-                        {(booking.status === 'pending_negotiation' ||
-                          booking.status === 'counter_offered') && (
-                          <button
-                            type="button"
-                            onClick={() => onValidateOrder(booking.id)}
-                            className="px-4 py-2.5 min-h-[44px] bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-1.5"
-                          >
-                            <Check className="w-3.5 h-3.5" />
-                            <span>Valider la commande</span>
-                          </button>
-                        )}
+                  {(booking.status === 'rejected' || booking.status === 'cancelled') && (
+                    <div className="bg-rose-50 border border-rose-200 rounded-xl p-3.5 text-xs text-rose-900 flex items-start gap-2.5">
+                      <XCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                      <div className="space-y-0.5">
+                        <div className="font-bold">Commande refusée (GPS désactivé)</div>
+                        <p className="text-rose-800">
+                          {booking.rejectionReason || 'Commande refusée par le gérant.'}
+                        </p>
+                      </div>
+                    </div>
+                  )}
 
+                  {refusingBookingId === booking.id && (
+                    <div className="bg-rose-50/80 border border-rose-200 rounded-xl p-4 space-y-3">
+                      <div className="text-xs font-bold text-rose-950">
+                        Message de refus visible par le client ({booking.clientName})
+                      </div>
+                      <input
+                        type="text"
+                        value={refusalReasonDraft}
+                        onChange={(e) => setRefusalReasonDraft(e.target.value)}
+                        placeholder="Ex: Aucun agent disponible sur ce créneau..."
+                        className="w-full bg-white border border-rose-300 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-rose-600"
+                      />
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setRefusingBookingId(null)}
+                          className="px-3.5 py-2 min-h-[40px] text-xs font-semibold text-slate-600"
+                        >
+                          Annuler
+                        </button>
                         <button
                           type="button"
                           onClick={() => {
-                            setEditingPriceId(isEditingPrice ? null : booking.id);
-                            setPriceInput(booking.finalPrice + 5000);
-                            setPriceNote('');
+                            onRefuseOrder(
+                              booking.id,
+                              refusalReasonDraft.trim() ||
+                                'Commande refusée par le gérant.'
+                            );
+                            setRefusingBookingId(null);
                           }}
-                          className="px-4 py-2.5 min-h-[44px] bg-slate-100 hover:bg-slate-200 text-slate-900 text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-1.5"
+                          className="px-4 py-2 min-h-[40px] bg-rose-700 hover:bg-rose-800 text-white text-xs font-semibold rounded-xl"
                         >
-                          <DollarSign className="w-3.5 h-3.5" />
-                          <span>Modifier le prix</span>
+                          Confirmer le refus
                         </button>
+                      </div>
+                    </div>
+                  )}
 
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setAssigningBookingId(isAssigning ? null : booking.id)
-                          }
-                          className="px-4 py-2.5 min-h-[44px] bg-slate-100 hover:bg-slate-200 text-slate-900 text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-1.5"
-                        >
-                          <Users className="w-3.5 h-3.5" />
-                          <span>Désigner les agents</span>
-                        </button>
+                  <div className="flex flex-wrap items-center gap-2.5 pt-2 border-t border-slate-100">
+                    {booking.status !== 'cancelled' &&
+                      booking.status !== 'rejected' &&
+                      booking.status !== 'completed' && (
+                        <>
+                          {(booking.status === 'pending_negotiation' ||
+                            booking.status === 'counter_offered') && (
+                            <button
+                              type="button"
+                              onClick={() => onValidateOrder(booking.id)}
+                              className="px-4 py-2.5 min-h-[44px] bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-1.5"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              <span>Valider la commande</span>
+                            </button>
+                          )}
 
-                        <button
-                          type="button"
-                          onClick={() =>
-                            onRefuseOrder(booking.id, 'Commande refusée par le gérant')
-                          }
-                          className="px-4 py-2.5 min-h-[44px] bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-1.5"
-                        >
-                          <XCircle className="w-3.5 h-3.5" />
-                          <span>Refuser</span>
-                        </button>
-                      </>
-                    )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingPriceId(isEditingPrice ? null : booking.id);
+                              setPriceInput(booking.finalPrice + 5000);
+                              setPriceNote('');
+                            }}
+                            className="px-4 py-2.5 min-h-[44px] bg-slate-100 hover:bg-slate-200 text-slate-900 text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-1.5"
+                          >
+                            <DollarSign className="w-3.5 h-3.5" />
+                            <span>Modifier le prix</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setAssigningBookingId(isAssigning ? null : booking.id)
+                            }
+                            className="px-4 py-2.5 min-h-[44px] bg-slate-100 hover:bg-slate-200 text-slate-900 text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-1.5"
+                          >
+                            <Users className="w-3.5 h-3.5" />
+                            <span>Désigner les agents</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setRefusingBookingId(
+                                refusingBookingId === booking.id ? null : booking.id
+                              );
+                              setRefusalReasonDraft(
+                                'Commande refusée par le gérant : créneau ou tarif non disponible.'
+                              );
+                            }}
+                            className="px-4 py-2.5 min-h-[44px] bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-1.5"
+                          >
+                            <XCircle className="w-3.5 h-3.5" />
+                            <span>Refuser</span>
+                          </button>
+                        </>
+                      )}
 
                     <button
                       type="button"
@@ -524,14 +612,50 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
                       <span>WhatsApp Client</span>
                     </button>
 
-                    <button
-                      type="button"
-                      onClick={() => setSelectedMapBookingId(booking.id)}
-                      className="px-4 py-2.5 min-h-[44px] bg-white hover:bg-slate-50 text-slate-800 border border-slate-200 text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-1.5"
-                    >
-                      <Navigation className="w-3.5 h-3.5 text-emerald-700" />
-                      <span>Centrer sur la carte</span>
-                    </button>
+                    {booking.status !== 'rejected' &&
+                      booking.status !== 'cancelled' &&
+                      booking.status !== 'completed' && (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedMapBookingId(booking.id)}
+                          className="px-4 py-2.5 min-h-[44px] bg-white hover:bg-slate-50 text-slate-800 border border-slate-200 text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-1.5"
+                        >
+                          <Navigation className="w-3.5 h-3.5 text-emerald-700" />
+                          <span>Centrer sur la carte</span>
+                        </button>
+                      )}
+
+                    {confirmDeleteId === booking.id ? (
+                      <div className="inline-flex items-center gap-2 ml-auto">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onDeleteOrder(booking.id);
+                            setConfirmDeleteId(null);
+                          }}
+                          className="px-4 py-2.5 min-h-[44px] bg-rose-700 hover:bg-rose-800 text-white text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-1.5"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Confirmer la suppression</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteId(null)}
+                          className="px-3 py-2.5 min-h-[44px] text-xs font-semibold text-slate-600 hover:text-slate-900"
+                        >
+                          Annuler
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteId(booking.id)}
+                        className="px-4 py-2.5 min-h-[44px] bg-white hover:bg-rose-50 text-rose-700 border border-rose-200 text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-1.5 ml-auto"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Supprimer définitivement</span>
+                      </button>
+                    )}
                   </div>
                 </div>
               );

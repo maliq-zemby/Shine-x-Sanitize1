@@ -36,17 +36,21 @@ export const LiveGpsMap: React.FC<LiveGpsMapProps> = ({
   onSelectBooking,
   title = 'Carte GPS Grand Libreville — Suivi Multi-utilisateurs',
 }) => {
+  const isInactive = (b: Booking) =>
+    b.status === 'rejected' || b.status === 'cancelled' || b.status === 'completed';
+
   const activeBookings = bookings.filter(
     (b) =>
-      b.gpsActive ||
-      b.clientGpsActive ||
-      b.status === 'in_transit' ||
-      b.status === 'in_progress' ||
-      b.id === selectedBookingId
+      !isInactive(b) &&
+      (b.gpsActive ||
+        b.clientGpsActive ||
+        b.status === 'in_transit' ||
+        b.status === 'in_progress' ||
+        b.id === selectedBookingId)
   );
 
   const focused =
-    bookings.find((b) => b.id === selectedBookingId) ||
+    activeBookings.find((b) => b.id === selectedBookingId) ||
     activeBookings.find((b) => b.gpsActive || b.clientGpsActive) ||
     activeBookings[0] ||
     null;

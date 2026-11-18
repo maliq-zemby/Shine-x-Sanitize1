@@ -11,6 +11,7 @@ export type BookingStatus =
   | 'in_transit'
   | 'in_progress'
   | 'completed'
+  | 'rejected'
   | 'cancelled';
 
 export type PaymentMethod = 'Airtel Money' | 'Moov Money' | 'Espèces' | 'Carte bancaire';

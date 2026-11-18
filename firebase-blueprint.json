@@ -65,7 +65,7 @@
         "finalPrice": { "type": "number" },
         "status": {
           "type": "string",
-          "enum": ["pending_negotiation", "counter_offered", "confirmed", "in_transit", "in_progress", "completed", "cancelled"]
+          "enum": ["pending_negotiation", "counter_offered", "confirmed", "in_transit", "in_progress", "completed", "rejected", "cancelled"]
         },
         "paymentMethod": { "type": "string", "enum": ["Airtel Money", "Moov Money", "Espèces", "Carte bancaire"] },
         "rating": { "type": "number" },

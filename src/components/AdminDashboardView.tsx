@@ -78,7 +78,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const pendingPromosCount = promotions.filter((p) => p.status === 'pending').length;
   const bannedCount = users.filter((u) => u.accountStatus === 'banned').length;
   const totalRevenue = bookings
-    .filter((b) => b.status !== 'cancelled')
+    .filter((b) => b.status !== 'cancelled' && b.status !== 'rejected')
     .reduce((acc, b) => acc + b.finalPrice, 0);
   const platformCommission = Math.round((totalRevenue * commissionRate) / 100);
 
