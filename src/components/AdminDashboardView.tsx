@@ -3,14 +3,22 @@ import {
   Ban,
   Building2,
   Check,
+  ClipboardCheck,
+  Loader2,
   Megaphone,
   RotateCcw,
   ShieldCheck,
   Trash2,
   Users,
+  X,
   XCircle,
 } from 'lucide-react';
 import { AccountStatus, Booking, Promotion, UserProfile } from '../types';
+import {
+  COMPANY_REJECTION_REASON_MAX,
+  COMPANY_REJECTION_REASON_MIN,
+  getCompanyValidationStatus,
+} from '../utils/companyValidation';
 import { LiveGpsMap } from './LiveGpsMap';
 
 interface AdminDashboardViewProps {
@@ -20,6 +28,8 @@ interface AdminDashboardViewProps {
   commissionRate: number;
   onChangeCommissionRate: (rate: number) => void;
   onUpdateUserStatus: (uid: string, status: AccountStatus, reason?: string) => void;
+  onApproveCompany: (uid: string) => Promise<void>;
+  onRejectCompany: (uid: string, reason: string) => Promise<void>;
   onDeleteUser: (uid: string) => void;
   onPurgePrototypeData: () => Promise<{ users: number; bookings: number; promos: number }>;
   onUpdatePromotionStatus: (promoId: string, status: 'approved' | 'rejected') => void;
@@ -47,6 +57,8 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   commissionRate,
   onChangeCommissionRate,
   onUpdateUserStatus,
+  onApproveCompany,
+  onRejectCompany,
   onDeleteUser,
   onPurgePrototypeData,
   onUpdatePromotionStatus,
@@ -60,6 +72,75 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   );
   const [purging, setPurging] = useState(false);
   const [purgeNotice, setPurgeNotice] = useState('');
+
+  // Validation des inscriptions Entreprise / Gérant
+  const [busyCompanyUid, setBusyCompanyUid] = useState<string | null>(null);
+  const [companyActionError, setCompanyActionError] = useState('');
+  const [companyNotice, setCompanyNotice] = useState('');
+  const [rejectTarget, setRejectTarget] = useState<UserProfile | null>(null);
+  const [rejectReasonInput, setRejectReasonInput] = useState('');
+  const [rejectError, setRejectError] = useState('');
+  const [rejectSubmitting, setRejectSubmitting] = useState(false);
+
+  const pendingCompanies = users
+    .filter((u) => getCompanyValidationStatus(u) === 'pending')
+    .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+
+  const handleApproveCompany = async (user: UserProfile) => {
+    setCompanyActionError('');
+    setCompanyNotice('');
+    setBusyCompanyUid(user.uid);
+    try {
+      await onApproveCompany(user.uid);
+      setCompanyNotice(`${user.companyName || user.displayName} a été validée et notifiée.`);
+    } catch (err) {
+      setCompanyActionError(err instanceof Error ? err.message : 'Validation impossible.');
+    } finally {
+      setBusyCompanyUid(null);
+    }
+  };
+
+  const openRejectModal = (user: UserProfile) => {
+    setRejectTarget(user);
+    setRejectReasonInput('');
+    setRejectError('');
+  };
+
+  const closeRejectModal = () => {
+    if (rejectSubmitting) return;
+    setRejectTarget(null);
+    setRejectReasonInput('');
+    setRejectError('');
+  };
+
+  const trimmedRejectReason = rejectReasonInput.trim();
+  const isRejectReasonValid = trimmedRejectReason.length >= COMPANY_REJECTION_REASON_MIN;
+
+  const handleConfirmReject = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!rejectTarget) return;
+    if (!isRejectReasonValid) {
+      setRejectError(
+        `Le motif de rejet est obligatoire (${COMPANY_REJECTION_REASON_MIN} caractères minimum).`
+      );
+      return;
+    }
+    setRejectSubmitting(true);
+    setRejectError('');
+    setCompanyNotice('');
+    try {
+      await onRejectCompany(rejectTarget.uid, trimmedRejectReason);
+      setCompanyNotice(
+        `${rejectTarget.companyName || rejectTarget.displayName} a été rejetée. Le motif lui a été transmis.`
+      );
+      setRejectTarget(null);
+      setRejectReasonInput('');
+    } catch (err) {
+      setRejectError(err instanceof Error ? err.message : 'Rejet impossible.');
+    } finally {
+      setRejectSubmitting(false);
+    }
+  };
 
   const handleRunPurge = async () => {
     setPurging(true);
@@ -163,6 +244,115 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         </div>
       </div>
 
+      {/* DEMANDES D'INSCRIPTION ENTREPRISES (validation obligatoire) */}
+      <section
+        aria-labelledby="company-requests-title"
+        className="bg-white rounded-2xl border border-amber-200 shadow-sm overflow-hidden"
+      >
+        <div className="px-5 py-4 bg-amber-50/70 border-b border-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <h2
+            id="company-requests-title"
+            className="text-lg font-bold text-slate-900 flex items-center gap-2"
+          >
+            <ClipboardCheck className="w-5 h-5 text-amber-700" />
+            <span>Demandes d'inscription Entreprises</span>
+          </h2>
+          <span className="text-xs font-semibold text-amber-800 tabular-nums">
+            {pendingCompanies.length} en attente de validation
+          </span>
+        </div>
+
+        <div className="p-5 space-y-3">
+          {companyNotice && (
+            <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-xl px-4 py-3 text-xs font-medium">
+              {companyNotice}
+            </div>
+          )}
+          {companyActionError && (
+            <div className="bg-rose-50 border border-rose-200 text-rose-900 rounded-xl px-4 py-3 text-xs font-medium">
+              {companyActionError}
+            </div>
+          )}
+
+          {pendingCompanies.length === 0 ? (
+            <div className="text-center text-xs text-slate-500 py-6">
+              Aucune demande d'inscription entreprise en attente.
+            </div>
+          ) : (
+            pendingCompanies.map((company) => {
+              const isBusy = busyCompanyUid === company.uid;
+              return (
+                <div
+                  key={company.uid}
+                  className="border border-slate-200 rounded-2xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-4"
+                >
+                  <div className="space-y-1 min-w-0">
+                    <div className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                      <Building2 className="w-4 h-4 text-emerald-700 shrink-0" />
+                      <span className="truncate">{company.companyName || 'Entreprise sans nom'}</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-500">
+                      <span className="font-semibold text-slate-700">{company.displayName}</span>
+                      {company.phone && (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <span>{company.phone}</span>
+                        </>
+                      )}
+                      {company.commune && (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <span>{company.commune}</span>
+                        </>
+                      )}
+                      {company.createdAt && (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <span>
+                            Inscrit le{' '}
+                            {new Date(company.createdAt).toLocaleDateString('fr-FR')}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                    {company.companyDescription && (
+                      <p className="text-xs text-slate-600 leading-relaxed pt-1">
+                        {company.companyDescription}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      disabled={isBusy}
+                      onClick={() => handleApproveCompany(company)}
+                      className="px-4 py-2 min-h-[40px] bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white text-xs font-semibold rounded-xl inline-flex items-center gap-1.5"
+                    >
+                      {isBusy ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Check className="w-3.5 h-3.5" />
+                      )}
+                      <span>Valider</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isBusy}
+                      onClick={() => openRejectModal(company)}
+                      className="px-4 py-2 min-h-[40px] bg-rose-50 hover:bg-rose-100 disabled:opacity-60 text-rose-700 border border-rose-200 text-xs font-semibold rounded-xl inline-flex items-center gap-1.5"
+                    >
+                      <XCircle className="w-3.5 h-3.5" />
+                      <span>Rejeter</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </section>
+
       {/* ADMIN TAB 1: REGISTERED USERS & COMPANY GOVERNANCE */}
       {adminTab === 'users' && (
         <div className="space-y-4">
@@ -265,6 +455,12 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                       </div>
                     )}
 
+                    {getCompanyValidationStatus(user) === 'rejected' && user.rejectionReason && (
+                      <div className="text-xs text-rose-700 font-medium pt-1">
+                        Motif du rejet : {user.rejectionReason}
+                      </div>
+                    )}
+
                     {user.accountStatus === 'banned' && user.banReason && (
                       <div className="text-xs text-rose-700 font-medium pt-1">
                         Motif du bannissement : {user.banReason}
@@ -291,19 +487,20 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                           <>
                             <button
                               type="button"
-                              onClick={() => onUpdateUserStatus(user.uid, 'active')}
-                              className="px-3.5 py-2 min-h-[40px] bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-xl inline-flex items-center gap-1.5"
+                              disabled={busyCompanyUid === user.uid}
+                              onClick={() => handleApproveCompany(user)}
+                              className="px-3.5 py-2 min-h-[40px] bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white text-xs font-semibold rounded-xl inline-flex items-center gap-1.5"
                             >
                               <Check className="w-3.5 h-3.5" />
-                              <span>Accepter</span>
+                              <span>Valider</span>
                             </button>
                             <button
                               type="button"
-                              onClick={() => onUpdateUserStatus(user.uid, 'rejected')}
+                              onClick={() => openRejectModal(user)}
                               className="px-3.5 py-2 min-h-[40px] bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold rounded-xl inline-flex items-center gap-1.5"
                             >
                               <XCircle className="w-3.5 h-3.5" />
-                              <span>Refuser</span>
+                              <span>Rejeter</span>
                             </button>
                           </>
                         )}
@@ -491,6 +688,41 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               </button>
             </div>
           </div>
+        </div>
+      )}
+      {rejectTarget && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4" role="dialog" aria-modal="true">
+          <form onSubmit={handleConfirmReject} className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <h3 className="text-base font-bold text-slate-900">
+                Rejeter {rejectTarget.companyName || rejectTarget.displayName}
+              </h3>
+              <button type="button" onClick={closeRejectModal} aria-label="Fermer" className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <label htmlFor="reject-reason" className="text-xs font-semibold text-slate-700 block">
+              Motif du rejet (obligatoire)
+            </label>
+            <textarea
+              id="reject-reason"
+              required
+              rows={4}
+              maxLength={COMPANY_REJECTION_REASON_MAX}
+              value={rejectReasonInput}
+              onChange={(e) => setRejectReasonInput(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm"
+            />
+            {rejectError && <div className="text-xs text-rose-700 font-medium">{rejectError}</div>}
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={closeRejectModal} className="px-4 py-2 bg-slate-100 text-slate-800 text-xs font-semibold rounded-xl">
+                Annuler
+              </button>
+              <button type="submit" disabled={!isRejectReasonValid || rejectSubmitting} className="px-4 py-2 bg-rose-700 hover:bg-rose-800 disabled:opacity-60 text-white text-xs font-semibold rounded-xl">
+                {rejectSubmitting ? 'Envoi...' : 'Confirmer le rejet'}
+              </button>
+            </div>
+          </form>
         </div>
       )}
     </div>

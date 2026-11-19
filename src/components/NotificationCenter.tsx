@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import {
   Award,
+  BadgeCheck,
   Bell,
   BellRing,
   Camera,
@@ -9,6 +10,7 @@ import {
   Clock,
   Heart,
   Megaphone,
+  ShieldX,
   UserPlus,
   Wrench,
   X,
@@ -88,6 +90,16 @@ const TYPE_META: Record<
     label: 'Message du Gérant',
     badgeClass: 'bg-amber-100 text-amber-800',
     Icon: Award,
+  },
+  company_approved: {
+    label: 'Entreprise validée',
+    badgeClass: 'bg-emerald-100 text-emerald-800',
+    Icon: BadgeCheck,
+  },
+  company_rejected: {
+    label: 'Inscription refusée',
+    badgeClass: 'bg-rose-100 text-rose-700',
+    Icon: ShieldX,
   },
 };
 

@@ -48,7 +48,8 @@ service cloud.firestore {
     function isActiveManager() {
       return hasUserDoc() &&
         currentUserData().role == 'manager' &&
-        currentUserData().accountStatus == 'active';
+        currentUserData().accountStatus == 'active' &&
+        currentUserData().get('status', 'approved') == 'approved';
     }
 
     function isActiveAgent() {
@@ -63,7 +64,7 @@ service cloud.firestore {
 
     function isValidUserProfile(data) {
       return data.keys().hasAll(['uid', 'email', 'displayName', 'role', 'accountStatus', 'phone', 'acceptedTerms', 'acceptedTermsAt', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['uid', 'email', 'displayName', 'firstName', 'lastName', 'photoURL', 'role', 'accountStatus', 'phone', 'acceptedTerms', 'acceptedTermsAt', 'companyName', 'companyDescription', 'commune', 'banReason', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'displayName', 'firstName', 'lastName', 'photoURL', 'role', 'accountStatus', 'phone', 'acceptedTerms', 'acceptedTermsAt', 'companyName', 'companyDescription', 'commune', 'banReason', 'status', 'rejectionReason', 'createdAt', 'updatedAt'])
         && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$')
         && data.email is string && data.email.size() >= 3 && data.email.size() <= 160
         && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120
@@ -79,6 +80,8 @@ service cloud.firestore {
         && (!('companyDescription' in data) || (data.companyDescription is string && data.companyDescription.size() <= 600))
         && (!('commune' in data) || (data.commune is string && data.commune.size() <= 120))
         && (!('banReason' in data) || (data.banReason is string && data.banReason.size() <= 300))
+        && (!('status' in data) || data.status in ['pending', 'approved', 'rejected'])
+        && (!('rejectionReason' in data) || (data.rejectionReason is string && data.rejectionReason.size() <= 300))
         && data.createdAt is string && data.createdAt.size() <= 64
         && data.updatedAt is string && data.updatedAt.size() <= 64;
     }
@@ -157,7 +160,7 @@ service cloud.firestore {
       return data.keys().hasAll(['id', 'type', 'title', 'body', 'targetRoles', 'relatedId', 'actorUid', 'createdAt'])
         && data.keys().hasOnly(['id', 'type', 'title', 'body', 'targetRoles', 'targetAgentNames', 'targetOwnerUid', 'relatedId', 'relatedTab', 'actorUid', 'createdAt'])
         && isValidId(data.id)
-        && data.type in ['new_booking', 'agent_assigned', 'new_registration', 'promo_approved', 'mission_completed', 'client_thank_you', 'agent_encouragement']
+        && data.type in ['new_booking', 'agent_assigned', 'new_registration', 'promo_approved', 'mission_completed', 'client_thank_you', 'agent_encouragement', 'company_approved', 'company_rejected']
         && data.title is string && data.title.size() >= 2 && data.title.size() <= 140
         && data.body is string && data.body.size() >= 2 && data.body.size() <= 400
         && data.targetRoles is list && data.targetRoles.size() >= 1 && data.targetRoles.size() <= 4 && data.targetRoles.hasOnly(['client', 'agent', 'manager', 'admin'])
@@ -180,7 +183,7 @@ service cloud.firestore {
         && incoming().uid == request.auth.uid
         && (
           (incoming().role in ['client', 'agent'] && incoming().accountStatus == 'active')
-          || (incoming().role == 'manager' && incoming().accountStatus == 'pending' && 'companyName' in incoming() && incoming().companyName.size() >= 2)
+          || (incoming().role == 'manager' && incoming().accountStatus == 'pending' && incoming().get('status', '') == 'pending' && incoming().get('rejectionReason', 'x') == '' && 'companyName' in incoming() && incoming().companyName.size() >= 2)
           || (isBootstrappedAdmin() && incoming().role == 'admin' && incoming().accountStatus == 'active')
         );
       allow update: if isSignedIn() && isValidId(userId) && isValidUserProfile(incoming()) && (
@@ -284,6 +287,7 @@ service cloud.firestore {
           || (incoming().type == 'promo_approved' && isAdmin() && incoming().targetRoles.hasOnly(['client', 'agent', 'manager', 'admin']))
           || (incoming().type == 'mission_completed' && (isAdmin() || isActiveManager() || isActiveAgent()) && incoming().targetRoles.hasOnly(['manager', 'admin']))
           || (incoming().type == 'client_thank_you' && (isAdmin() || isActiveManager() || isActiveAgent()) && incoming().targetRoles.hasOnly(['client']) && 'targetOwnerUid' in incoming() && incoming().targetOwnerUid.size() >= 1)
+          || (incoming().type in ['company_approved', 'company_rejected'] && isAdmin() && incoming().targetRoles.hasOnly(['manager']) && 'targetOwnerUid' in incoming() && incoming().targetOwnerUid.size() >= 1)
           || (incoming().type == 'agent_encouragement' && (isAdmin() || isActiveManager()) && incoming().targetRoles.hasOnly(['agent', 'admin']))
         );
       allow update: if false;
