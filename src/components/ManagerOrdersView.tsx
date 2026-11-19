@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { Booking, GpsPoint, Promotion, ServiceItem, UserProfile } from '../types';
 import { useReverseGeocodedNeighborhood } from '../utils/geocoding';
+import { getBookingPromoInfo } from '../utils/promotions';
 import { LiveGpsMap } from './LiveGpsMap';
 import { WhatsAppComposerModal } from './WhatsAppComposerModal';
 
@@ -400,6 +401,7 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
             {bookings.map((booking) => {
               const isEditingPrice = editingPriceId === booking.id;
               const isAssigning = assigningBookingId === booking.id;
+              const promoInfo = getBookingPromoInfo(booking);
 
               return (
                 <div
@@ -416,6 +418,14 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
                         <span>{booking.clientPhone}</span>
                         <span aria-hidden="true">·</span>
                         <span>{booking.createdAt}</span>
+                        {promoInfo && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-bold">
+                            <Tag className="w-3 h-3" />
+                            <span>
+                              Promo {promoInfo.discountLabel || (promoInfo.discountPercent ? `-${promoInfo.discountPercent}%` : '')} · {promoInfo.title}
+                            </span>
+                          </span>
+                        )}
                       </div>
                       <h3 className="text-base font-bold text-slate-900">{booking.serviceName}</h3>
                       <div className="text-xs text-slate-600 flex flex-wrap items-center gap-2">
@@ -449,14 +459,14 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
                     </div>
 
                     <div className="text-right shrink-0">
-                      {booking.appliedPromotionTitle && booking.originalPrice !== undefined && (
+                      {promoInfo && (
                         <div className="text-[11px] font-semibold text-emerald-700 mb-0.5">
-                          Promo {booking.appliedPromotionDiscount || ''} · {booking.appliedPromotionTitle}{' '}
+                          Promo {promoInfo.discountLabel || (promoInfo.discountPercent ? `-${promoInfo.discountPercent}%` : '')} · {promoInfo.title}{' '}
                           (<span className="line-through text-slate-400 tabular-nums">
-                            {booking.originalPrice.toLocaleString()} XAF
+                            {promoInfo.originalPrice.toLocaleString()} XAF
                           </span>{' '}
                           <span className="tabular-nums">
-                            -{(booking.discountAmount ?? 0).toLocaleString()} XAF
+                            -{promoInfo.discountAmount.toLocaleString()} XAF
                           </span>)
                         </div>
                       )}
@@ -467,7 +477,7 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
                         </span>
                       </div>
                       <div className="text-base font-bold text-emerald-800 tabular-nums">
-                        Tarif actuel : {booking.finalPrice.toLocaleString()} XAF
+                        Tarif final à payer : {booking.finalPrice.toLocaleString()} XAF
                       </div>
                       <div className="text-[11px] font-medium text-slate-600 mt-0.5">
                         Statut : <strong className="text-slate-900">{booking.status}</strong>

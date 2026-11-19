@@ -95,6 +95,15 @@ export interface GpsPoint {
   updatedAt?: string;
 }
 
+export interface BookingPromoApplied {
+  promotionId?: string;
+  title: string;
+  discountLabel?: string;
+  discountPercent?: number | null;
+  discountAmount: number;
+  originalPrice: number;
+}
+
 export interface Booking {
   id: string;
   ownerUid: string;
@@ -119,6 +128,7 @@ export interface Booking {
     vehicleSeats?: number;
   };
   clientOfferPrice: number;
+  promoApplied?: BookingPromoApplied | null;
   originalPrice?: number;
   discountAmount?: number;
   appliedPromotionId?: string;

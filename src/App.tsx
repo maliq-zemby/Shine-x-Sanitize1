@@ -468,7 +468,9 @@ export default function App() {
     const unsub = onSnapshot(
       q,
       (snapshot) => {
-        const remoteBookings = snapshot.docs.map((d) => d.data() as Booking);
+        const remoteBookings = snapshot.docs
+          .map((d) => d.data() as Booking)
+          .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
         if (userProfile.role === 'client') {
           setBookings(remoteBookings.filter((b) => b.ownerUid === firebaseUser.uid));
         } else {

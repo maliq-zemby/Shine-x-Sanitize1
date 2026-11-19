@@ -15,7 +15,7 @@ import {
 } from '../data/quartiers';
 import { Booking, GpsPoint, PaymentMethod, Promotion, ServiceItem } from '../types';
 import { HIGH_ACCURACY_GEO_OPTIONS } from '../utils/geocoding';
-import { computeDiscountedPrice } from '../utils/promotions';
+import { buildBookingPromoApplied, computeDiscountedPrice } from '../utils/promotions';
 
 interface ServiceConfiguratorModalProps {
   service: ServiceItem;
@@ -253,11 +253,7 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
       clientOfferPrice: finalSubmittedOffer,
       ...(activePromotion && promoBreakdown
         ? {
-            originalPrice: promoBreakdown.originalPrice,
-            discountAmount: promoBreakdown.discountAmount,
-            appliedPromotionId: activePromotion.id.slice(0, 64),
-            appliedPromotionTitle: activePromotion.title.slice(0, 140),
-            appliedPromotionDiscount: promoBreakdown.shortLabel.slice(0, 40),
+            promoApplied: buildBookingPromoApplied(activePromotion, promoBreakdown),
           }
         : {}),
       finalPrice: finalSubmittedOffer,

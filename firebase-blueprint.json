@@ -63,6 +63,10 @@
         "clientGpsActive": { "type": "boolean" },
         "gpsActive": { "type": "boolean" },
         "clientOfferPrice": { "type": "number" },
+        "promoApplied": {
+          "type": "object",
+          "description": "Détails de la promotion appliquée (null ou absent pour une commande standard)"
+        },
         "originalPrice": { "type": "number" },
         "discountAmount": { "type": "number" },
         "appliedPromotionId": { "type": "string", "maxLength": 64 },

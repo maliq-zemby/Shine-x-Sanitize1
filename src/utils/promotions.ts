@@ -1,4 +1,4 @@
-import { Promotion, ServiceItem } from '../types';
+import { Booking, BookingPromoApplied, Promotion, ServiceItem } from '../types';
 
 export interface ParsedDiscount {
   type: 'percent' | 'fixed' | 'none';
@@ -8,6 +8,7 @@ export interface ParsedDiscount {
 
 export interface DiscountedPriceBreakdown {
   originalPrice: number;
+  discountPercent: number | null;
   discountAmount: number;
   finalPrice: number;
   shortLabel: string;
@@ -75,10 +76,12 @@ export function computeDiscountedPrice(
   const safeBase = Math.max(1000, Math.round(rawPrice));
   const parsed = parsePromotionDiscount(promo);
 
+  let discountPercent: number | null = null;
   let discountAmount = 0;
   let finalPrice = safeBase;
 
   if (parsed.type === 'percent') {
+    discountPercent = parsed.value;
     const rawFinal = Math.round(safeBase * (1 - parsed.value / 100));
     finalPrice = Math.max(1000, rawFinal);
     discountAmount = Math.max(0, safeBase - finalPrice);
@@ -96,11 +99,48 @@ export function computeDiscountedPrice(
 
   return {
     originalPrice: safeBase,
+    discountPercent,
     discountAmount,
     finalPrice,
     shortLabel: parsed.shortLabel,
     offerLineLabel,
   };
+}
+
+export function buildBookingPromoApplied(
+  promo: Promotion,
+  breakdown: DiscountedPriceBreakdown
+): BookingPromoApplied {
+  return {
+    promotionId: promo.id.slice(0, 64),
+    title: promo.title.slice(0, 140),
+    discountLabel: breakdown.shortLabel.slice(0, 40),
+    discountPercent: breakdown.discountPercent,
+    discountAmount: breakdown.discountAmount,
+    originalPrice: breakdown.originalPrice,
+  };
+}
+
+/**
+ * Normalise la lecture de la promotion appliquée sur une commande
+ * (supporte `promoApplied` ainsi que les éventuels anciens champs plats).
+ * Retourne `null` si aucune promotion n'a été appliquée.
+ */
+export function getBookingPromoInfo(booking: Booking): BookingPromoApplied | null {
+  if (booking.promoApplied && booking.promoApplied.title) {
+    return booking.promoApplied;
+  }
+  if (booking.appliedPromotionTitle && booking.originalPrice !== undefined) {
+    return {
+      ...(booking.appliedPromotionId ? { promotionId: booking.appliedPromotionId } : {}),
+      title: booking.appliedPromotionTitle,
+      ...(booking.appliedPromotionDiscount ? { discountLabel: booking.appliedPromotionDiscount } : {}),
+      discountPercent: null,
+      discountAmount: booking.discountAmount ?? Math.max(0, booking.originalPrice - booking.finalPrice),
+      originalPrice: booking.originalPrice,
+    };
+  }
+  return null;
 }
 
 /**
