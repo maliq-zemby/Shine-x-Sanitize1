@@ -271,6 +271,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         ...(selectedRole === 'manager'
           ? {
               companyName: companyName.trim(),
+              // Validation administrateur obligatoire avant tout accès à l'espace entreprise
+              status: 'pending' as const,
+              rejectionReason: '',
               ...(companyDescription.trim()
                 ? { companyDescription: companyDescription.trim() }
                 : {}),

@@ -42,6 +42,7 @@ import {
 import { AdminDashboardView } from './components/AdminDashboardView';
 import { AgentWorkspaceView } from './components/AgentWorkspaceView';
 import { AuthModal } from './components/AuthModal';
+import { CompanyValidationGate } from './components/CompanyValidationGate';
 import { ClientReservationsView } from './components/ClientReservationsView';
 import { ManagerOrdersView } from './components/ManagerOrdersView';
 import {
@@ -97,6 +98,11 @@ import {
   setCachedProfileForUid,
   showBrowserPushNotification,
 } from './utils/notifications';
+import {
+  COMPANY_REJECTION_REASON_MAX,
+  getCompanyValidationStatus,
+  isCompanyAccessBlocked,
+} from './utils/companyValidation';
 
 type ActiveTab = ActiveTabId;
 
@@ -190,9 +196,11 @@ export default function App() {
 
   const isActualAdmin = userProfile?.role === 'admin';
   const isManagerOrAdmin = currentRole === 'manager' || currentRole === 'admin';
-  const isAccountPending = userProfile?.accountStatus === 'pending';
   const isAccountBanned = userProfile?.accountStatus === 'banned';
-  const isAccountRejected = userProfile?.accountStatus === 'rejected';
+  // Entreprise / Gérant : tant que l'administrateur n'a pas validé (status !== 'approved'),
+  // tout accès au tableau de bord et aux fonctionnalités est bloqué par un écran plein écran.
+  const companyValidationStatus = getCompanyValidationStatus(userProfile);
+  const isCompanyBlocked = isCompanyAccessBlocked(userProfile);
 
   // Purge legacy prototype localStorage caches once on startup
   useEffect(() => {
@@ -364,6 +372,31 @@ export default function App() {
     };
   }, []);
 
+  // Live listener on the signed-in company's own /users document while it is awaiting
+  // validation (or rejected), so an admin decision unlocks / updates the screen instantly.
+  const ownProfileUid = userProfile?.uid;
+  useEffect(() => {
+    if (!authReady || !firebaseUser || !ownProfileUid || !isCompanyBlocked) return;
+
+    const unsub = onSnapshot(
+      doc(db, 'users', firebaseUser.uid),
+      (snap) => {
+        if (!snap.exists()) return;
+        const fresh = snap.data() as UserProfile;
+        setUserProfile(fresh);
+        setCachedProfileForUid(fresh);
+        if (getCompanyValidationStatus(fresh) === 'approved') {
+          setActiveTab(getDashboardTabForRole(fresh.role));
+        }
+      },
+      (error) => {
+        console.warn('Company validation listener notice:', error.message);
+      }
+    );
+
+    return () => unsub();
+  }, [authReady, firebaseUser, ownProfileUid, isCompanyBlocked]);
+
   // Real-time Firestore listener for /services (prices updated by manager reflect immediately)
   useEffect(() => {
     const unsub = onSnapshot(
@@ -418,7 +451,7 @@ export default function App() {
 
   // Real-time Firestore listener for /bookings with strict client isolation
   useEffect(() => {
-    if (!authReady || !firebaseUser || !userProfile) {
+    if (!authReady || !firebaseUser || !userProfile || isCompanyAccessBlocked(userProfile)) {
       setBookings([]);
       return;
     }
@@ -470,7 +503,7 @@ export default function App() {
 
   // Real-time Firestore listener for targeted push notifications (/notifications)
   useEffect(() => {
-    if (!authReady || !firebaseUser || !userProfile) {
+    if (!authReady || !firebaseUser || !userProfile || isCompanyAccessBlocked(userProfile)) {
       setNotifications([]);
       return;
     }
@@ -499,7 +532,7 @@ export default function App() {
 
         const matchesUser = (n: AppNotification) => {
           if (!isNotificationFresh(n.createdAt)) return false;
-          if (n.targetOwnerUid && userProfile.role === 'client' && n.targetOwnerUid !== firebaseUser.uid) {
+          if (n.targetOwnerUid && userProfile.role !== 'admin' && n.targetOwnerUid !== firebaseUser.uid) {
             return false;
           }
           if (userProfile.role === 'agent' && n.targetAgentNames && n.targetAgentNames.length > 0) {
@@ -965,6 +998,73 @@ export default function App() {
     }
   };
 
+  // Validation des inscriptions Entreprise / Gérant (Admin uniquement)
+  const handleApproveCompany = async (uid: string) => {
+    if (!firebaseUser || !isActualAdmin) return;
+    const target = users.find((u) => u.uid === uid);
+    const updatedAt = new Date().toISOString();
+    const patch = {
+      status: 'approved' as const,
+      accountStatus: 'active' as const,
+      rejectionReason: '',
+      updatedAt,
+    };
+
+    try {
+      await updateDoc(doc(db, 'users', uid), patch);
+    } catch (error) {
+      console.error('Company approval failed:', error);
+      throw new Error("Impossible de valider cette entreprise. Vérifiez votre connexion et réessayez.");
+    }
+    setUsers((prev) => prev.map((u) => (u.uid === uid ? { ...u, ...patch } : u)));
+
+    const companyLabel = target?.companyName || target?.displayName || 'Votre entreprise';
+    await publishNotification({
+      type: 'company_approved',
+      title: 'Inscription Entreprise validée',
+      body: `Félicitations ! ${companyLabel} a été validée par l'administrateur. Votre espace entreprise est désormais accessible.`,
+      targetRoles: ['manager'],
+      targetOwnerUid: uid,
+      relatedId: uid,
+      relatedTab: 'suivi_commande',
+    });
+  };
+
+  const handleRejectCompany = async (uid: string, reason: string) => {
+    if (!firebaseUser || !isActualAdmin) return;
+    const motif = reason.trim().slice(0, COMPANY_REJECTION_REASON_MAX);
+    if (!motif) {
+      throw new Error('Le motif de rejet est obligatoire.');
+    }
+    const target = users.find((u) => u.uid === uid);
+    const updatedAt = new Date().toISOString();
+    const patch = {
+      status: 'rejected' as const,
+      accountStatus: 'rejected' as const,
+      rejectionReason: motif,
+      updatedAt,
+    };
+
+    try {
+      await updateDoc(doc(db, 'users', uid), patch);
+    } catch (error) {
+      console.error('Company rejection failed:', error);
+      throw new Error("Impossible d'enregistrer le rejet. Vérifiez votre connexion et réessayez.");
+    }
+    setUsers((prev) => prev.map((u) => (u.uid === uid ? { ...u, ...patch } : u)));
+
+    const companyLabel = target?.companyName || target?.displayName || 'Votre entreprise';
+    await publishNotification({
+      type: 'company_rejected',
+      title: 'Inscription Entreprise refusée',
+      body: `L'inscription de ${companyLabel} a été refusée. Motif : ${motif}`,
+      targetRoles: ['manager'],
+      targetOwnerUid: uid,
+      relatedId: uid,
+      relatedTab: 'home',
+    });
+  };
+
   const handleDeleteUser = async (uid: string) => {
     setUsers((prev) => prev.filter((u) => u.uid !== uid));
     if (firebaseUser && isActualAdmin) {
@@ -1226,6 +1326,16 @@ export default function App() {
     );
   }
 
+  if (firebaseUser && userProfile && isCompanyBlocked) {
+    return (
+      <CompanyValidationGate
+        profile={userProfile}
+        status={companyValidationStatus === 'rejected' ? 'rejected' : 'pending'}
+        onSignOut={handleSignOut}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#F8FAF9] text-slate-900 pb-10">
       {/* STICKY TOP HEADER + UNIFIED NAVIGATION BAR */}
@@ -1477,23 +1587,12 @@ export default function App() {
         </nav>
       </header>
 
-      {/* ACCOUNT STATUS ALERTS */}
-      {isAccountPending && (
-        <div className="bg-amber-50 border-b border-amber-200 px-4 py-2.5 text-xs text-amber-950 flex items-center justify-center gap-2">
-          <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0" />
-          <span>
-            Votre inscription entreprise ({userProfile?.companyName}) est en attente de validation par l'administrateur central.
-          </span>
-        </div>
-      )}
-
-      {(isAccountBanned || isAccountRejected) && (
+      {/* ACCOUNT STATUS ALERTS (les entreprises non validées sont bloquées en plein écran) */}
+      {isAccountBanned && (
         <div className="bg-rose-50 border-b border-rose-200 px-4 py-2.5 text-xs text-rose-900 flex items-center justify-center gap-2">
           <AlertTriangle className="w-4 h-4 text-rose-700 shrink-0" />
           <span>
-            {isAccountBanned
-              ? `Compte suspendu par l'administrateur : ${userProfile?.banReason || 'Non-respect des règles'}`
-              : "Votre demande d'inscription a été refusée par l'administrateur."}
+            {`Compte suspendu par l'administrateur : ${userProfile?.banReason || 'Non-respect des règles'}`}
           </span>
         </div>
       )}
@@ -2029,6 +2128,8 @@ export default function App() {
             commissionRate={commissionRate}
             onChangeCommissionRate={setCommissionRate}
             onUpdateUserStatus={handleUpdateUserStatus}
+            onApproveCompany={handleApproveCompany}
+            onRejectCompany={handleRejectCompany}
             onDeleteUser={handleDeleteUser}
             onPurgePrototypeData={handlePurgePrototypeData}
             onUpdatePromotionStatus={handleUpdatePromotionStatus}

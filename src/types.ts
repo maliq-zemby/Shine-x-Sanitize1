@@ -2,6 +2,14 @@ export type Role = 'client' | 'agent' | 'manager' | 'admin';
 
 export type AccountStatus = 'active' | 'pending' | 'rejected' | 'banned';
 
+/**
+ * Statut de validation administrateur d'un compte Entreprise / Gérant.
+ * - pending  : inscription en cours de vérification (accès bloqué)
+ * - approved : entreprise validée (accès complet)
+ * - rejected : inscription refusée (accès bloqué, motif dans rejectionReason)
+ */
+export type CompanyValidationStatus = 'pending' | 'approved' | 'rejected';
+
 export type VehicleCategory = '4_wheels' | 'moto' | 'velo';
 
 export type BookingStatus =
@@ -32,6 +40,10 @@ export interface UserProfile {
   companyDescription?: string;
   commune?: string;
   banReason?: string;
+  /** Validation administrateur (comptes Entreprise / Gérant uniquement). */
+  status?: CompanyValidationStatus;
+  /** Motif de rejet saisi par l'administrateur ("" tant qu'aucun rejet). */
+  rejectionReason?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -134,7 +146,9 @@ export type NotificationType =
   | 'promo_approved'
   | 'mission_completed'
   | 'client_thank_you'
-  | 'agent_encouragement';
+  | 'agent_encouragement'
+  | 'company_approved'
+  | 'company_rejected';
 
 export type ActiveTabId =
   | 'home'
