@@ -222,10 +222,10 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-1">
           <div className="text-xs text-slate-500 font-medium">Annonces promotionnelles</div>
           <div className="text-2xl font-bold text-slate-900 tabular-nums">
-            {promotions.filter((p) => p.status === 'approved').length} actives
+            {promotions.filter((p) => p.status === 'active' || p.status === 'approved').length} actives
           </div>
           <div className="text-[11px] text-emerald-700 font-medium">
-            {pendingPromosCount} à valider
+            {pendingPromosCount > 0 ? `${pendingPromosCount} à vérifier` : 'Publication directe active'}
           </div>
         </div>
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-1">
@@ -577,11 +577,13 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
             <span>Validation des Annonces Promotionnelles</span>
           </h2>
           <p className="text-xs text-slate-600">
-            Les annonces validées deviennent immédiatement visibles pour tous les clients dans la rubrique Promotions.
+            Les annonces publiées par les gérants validés apparaissent immédiatement sur la page d&apos;Accueil. Vous pouvez contrôler ou désactiver une offre si nécessaire.
           </p>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {promotions.map((promo) => (
+            {promotions.map((promo) => {
+              const isPublished = promo.status === 'active' || promo.status === 'approved';
+              return (
               <div
                 key={promo.id}
                 className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm flex flex-col justify-between gap-4"
@@ -591,18 +593,18 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                     <span className="font-bold text-emerald-800">{promo.discountLabel}</span>
                     <span
                       className={`font-semibold ${
-                        promo.status === 'approved'
+                        isPublished
                           ? 'text-emerald-700'
                           : promo.status === 'rejected'
                           ? 'text-rose-700'
                           : 'text-amber-700'
                       }`}
                     >
-                      {promo.status === 'approved'
-                        ? 'Validée (Publiée)'
+                      {isPublished
+                        ? 'Active (Publiée)'
                         : promo.status === 'rejected'
-                        ? 'Refusée'
-                        : 'En attente de validation'}
+                        ? 'Désactivée'
+                        : 'En attente'}
                     </span>
                   </div>
                   <h3 className="text-base font-bold text-slate-900">{promo.title}</h3>
@@ -613,14 +615,14 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 </div>
 
                 <div className="flex items-center gap-2 pt-3 border-t border-slate-100">
-                  {promo.status !== 'approved' && (
+                  {!isPublished && (
                     <button
                       type="button"
                       onClick={() => onUpdatePromotionStatus(promo.id, 'approved')}
                       className="px-4 py-2 min-h-[40px] bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-xl inline-flex items-center gap-1.5"
                     >
                       <Check className="w-3.5 h-3.5" />
-                      <span>Valider & Publier</span>
+                      <span>Réactiver & Publier</span>
                     </button>
                   )}
                   {promo.status !== 'rejected' && (
@@ -630,12 +632,13 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                       className="px-4 py-2 min-h-[40px] bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold rounded-xl inline-flex items-center gap-1.5"
                     >
                       <XCircle className="w-3.5 h-3.5" />
-                      <span>Refuser</span>
+                      <span>Désactiver</span>
                     </button>
                   )}
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

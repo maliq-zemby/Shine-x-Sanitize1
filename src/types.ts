@@ -81,9 +81,10 @@ export interface Promotion {
   serviceCategory?: string;
   companyName: string;
   validUntil?: string;
-  status: 'pending' | 'approved' | 'rejected';
+  status: 'active' | 'pending' | 'approved' | 'rejected';
   createdByUid: string;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface GpsPoint {

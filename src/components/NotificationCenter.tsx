@@ -72,7 +72,7 @@ const TYPE_META: Record<
     Icon: UserPlus,
   },
   promo_approved: {
-    label: 'Promotion validée',
+    label: 'Nouvelle promotion',
     badgeClass: 'bg-emerald-900 text-amber-300',
     Icon: Megaphone,
   },

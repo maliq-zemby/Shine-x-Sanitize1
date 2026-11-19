@@ -143,7 +143,7 @@ service cloud.firestore {
 
     function isValidPromotion(data) {
       return data.keys().hasAll(['id', 'title', 'description', 'discountLabel', 'companyName', 'status', 'createdByUid', 'createdAt'])
-        && data.keys().hasOnly(['id', 'title', 'description', 'discountLabel', 'serviceCategory', 'companyName', 'validUntil', 'status', 'createdByUid', 'createdAt'])
+        && data.keys().hasOnly(['id', 'title', 'description', 'discountLabel', 'serviceCategory', 'companyName', 'validUntil', 'status', 'createdByUid', 'createdAt', 'updatedAt'])
         && isValidId(data.id)
         && data.title is string && data.title.size() >= 3 && data.title.size() <= 120
         && data.description is string && data.description.size() >= 5 && data.description.size() <= 500
@@ -151,9 +151,10 @@ service cloud.firestore {
         && (!('serviceCategory' in data) || (data.serviceCategory is string && data.serviceCategory.size() <= 60))
         && data.companyName is string && data.companyName.size() >= 2 && data.companyName.size() <= 120
         && (!('validUntil' in data) || (data.validUntil is string && data.validUntil.size() <= 40))
-        && data.status in ['pending', 'approved', 'rejected']
+        && data.status in ['active', 'pending', 'approved', 'rejected']
         && data.createdByUid is string && data.createdByUid.size() >= 1 && data.createdByUid.size() <= 128
-        && data.createdAt is string && data.createdAt.size() <= 64;
+        && data.createdAt is string && data.createdAt.size() <= 64
+        && (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
     }
 
     function isValidNotification(data) {
@@ -256,13 +257,35 @@ service cloud.firestore {
     }
 
     match /promotions/{promoId} {
-      allow get: if existing().status == 'approved' || isAdmin() || (isSignedIn() && existing().createdByUid == request.auth.uid);
-      allow list: if existing().status == 'approved' || isAdmin() || (isSignedIn() && existing().createdByUid == request.auth.uid);
+      allow get: if isValidId(promoId) && (
+        existing().status in ['active', 'approved']
+        || isAdmin()
+        || (isSignedIn() && existing().createdByUid == request.auth.uid)
+      );
+      allow list: if existing().status in ['active', 'approved']
+        || isAdmin()
+        || (isSignedIn() && existing().createdByUid == request.auth.uid);
       allow create: if isSignedIn() && isNotBanned() && isValidId(promoId) && isValidPromotion(incoming())
+        && incoming().id == promoId
         && incoming().createdByUid == request.auth.uid
-        && (isAdmin() || (isActiveManager() && incoming().status == 'pending'));
-      allow update: if isSignedIn() && isValidId(promoId) && isValidPromotion(incoming()) && isAdmin();
-      allow delete: if isAdmin();
+        && (isAdmin() || (isActiveManager() && incoming().status in ['active', 'approved']));
+      allow update: if isSignedIn() && isNotBanned() && isValidId(promoId) && isValidPromotion(incoming())
+        && incoming().id == existing().id
+        && incoming().createdByUid == existing().createdByUid
+        && incoming().createdAt == existing().createdAt
+        && (
+          isAdmin()
+          || (
+            isActiveManager()
+            && existing().createdByUid == request.auth.uid
+            && incoming().status in ['active', 'approved']
+            && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'description', 'discountLabel', 'serviceCategory', 'companyName', 'validUntil', 'status', 'updatedAt'])
+          )
+        );
+      allow delete: if isSignedIn() && isNotBanned() && isValidId(promoId) && (
+        isAdmin()
+        || (isActiveManager() && existing().createdByUid == request.auth.uid)
+      );
     }
 
     match /notifications/{notificationId} {
@@ -284,7 +307,7 @@ service cloud.firestore {
           (incoming().type == 'new_booking' && incoming().targetRoles.hasOnly(['manager', 'admin', 'agent']))
           || (incoming().type == 'new_registration' && incoming().targetRoles.hasOnly(['manager', 'admin']))
           || (incoming().type == 'agent_assigned' && (isAdmin() || isActiveManager()) && incoming().targetRoles.hasOnly(['agent', 'manager', 'admin']))
-          || (incoming().type == 'promo_approved' && isAdmin() && incoming().targetRoles.hasOnly(['client', 'agent', 'manager', 'admin']))
+          || (incoming().type == 'promo_approved' && (isAdmin() || isActiveManager()) && incoming().targetRoles.hasOnly(['client', 'agent', 'manager', 'admin']))
           || (incoming().type == 'mission_completed' && (isAdmin() || isActiveManager() || isActiveAgent()) && incoming().targetRoles.hasOnly(['manager', 'admin']))
           || (incoming().type == 'client_thank_you' && (isAdmin() || isActiveManager() || isActiveAgent()) && incoming().targetRoles.hasOnly(['client']) && 'targetOwnerUid' in incoming() && incoming().targetOwnerUid.size() >= 1)
           || (incoming().type in ['company_approved', 'company_rejected'] && isAdmin() && incoming().targetRoles.hasOnly(['manager']) && 'targetOwnerUid' in incoming() && incoming().targetOwnerUid.size() >= 1)

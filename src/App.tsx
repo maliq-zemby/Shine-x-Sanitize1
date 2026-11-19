@@ -428,13 +428,13 @@ export default function App() {
     return () => unsub();
   }, [isActualAdmin]);
 
-  // Real-time Firestore listener for approved promotions (and all promotions for Admin)
+  // Real-time Firestore listener for active promotions (and all promotions for Admin)
   useEffect(() => {
     const promoRef = collection(db, 'promotions');
     const q =
       userProfile?.role === 'admin'
         ? promoRef
-        : query(promoRef, where('status', '==', 'approved'));
+        : query(promoRef, where('status', 'in', ['active', 'approved']));
 
     const unsub = onSnapshot(
       q,
@@ -933,32 +933,84 @@ export default function App() {
   const handleCreatePromotion = async (
     promoInput: Omit<Promotion, 'id' | 'status' | 'createdAt' | 'createdByUid'>
   ) => {
+    if (!firebaseUser || isAccountBanned || isCompanyBlocked) return;
+    const now = new Date().toISOString();
     const newPromo: Promotion = {
       ...promoInput,
       id: `promo-${Date.now()}`,
-      status: isActualAdmin ? 'approved' : 'pending',
-      createdByUid: firebaseUser?.uid || '',
-      createdAt: new Date().toISOString(),
+      status: 'active',
+      createdByUid: firebaseUser.uid,
+      createdAt: now,
     };
-    setPromotions((prev) => [newPromo, ...prev]);
 
-    if (firebaseUser) {
-      try {
-        await setDoc(doc(db, 'promotions', newPromo.id), newPromo);
-        if (newPromo.status === 'approved') {
-          await publishNotification({
-            type: 'promo_approved',
-            title: `Nouvelle promotion : ${newPromo.discountLabel}`,
-            body: `${newPromo.title} (${newPromo.companyName}) — Disponible dès maintenant à Libreville.`,
-            targetRoles: ['client', 'agent', 'manager', 'admin'],
-            relatedId: newPromo.id,
-            relatedTab: 'home',
-          });
-        }
-      } catch (error) {
-        handleFirestoreError(error, OperationType.CREATE, `promotions/${newPromo.id}`);
-      }
+    try {
+      await setDoc(doc(db, 'promotions', newPromo.id), newPromo);
+    } catch (error) {
+      console.error('Promotion create failed:', error);
+      throw new Error(
+        "Impossible de publier cette promotion dans Firestore. Vérifiez que votre compte entreprise est validé et que les règles Firestore sont à jour."
+      );
     }
+
+    setPromotions((prev) =>
+      prev.some((p) => p.id === newPromo.id) ? prev : [newPromo, ...prev]
+    );
+
+    await publishNotification({
+      type: 'promo_approved',
+      title: `Nouvelle promotion : ${newPromo.discountLabel}`,
+      body: `${newPromo.title} (${newPromo.companyName}) — Disponible dès maintenant à Libreville.`,
+      targetRoles: ['client', 'agent', 'manager', 'admin'],
+      relatedId: newPromo.id,
+      relatedTab: 'home',
+    });
+  };
+
+  const handleUpdatePromotion = async (
+    promoId: string,
+    updates: {
+      title: string;
+      description: string;
+      discountLabel: string;
+      serviceCategory?: string;
+      validUntil?: string;
+    }
+  ) => {
+    if (!firebaseUser || isAccountBanned || isCompanyBlocked) return;
+    const updatedAt = new Date().toISOString();
+    const patch = {
+      ...updates,
+      status: 'active' as const,
+      updatedAt,
+    };
+
+    try {
+      await updateDoc(doc(db, 'promotions', promoId), patch);
+    } catch (error) {
+      console.error('Promotion update failed:', error);
+      throw new Error(
+        "Impossible de modifier cette promotion. Vous ne pouvez modifier que les promotions que vous avez créées."
+      );
+    }
+
+    setPromotions((prev) =>
+      prev.map((p) => (p.id === promoId ? { ...p, ...patch } : p))
+    );
+  };
+
+  const handleDeletePromotion = async (promoId: string) => {
+    if (!firebaseUser || isAccountBanned || isCompanyBlocked) return;
+
+    try {
+      await deleteDoc(doc(db, 'promotions', promoId));
+    } catch (error) {
+      console.error('Promotion delete failed:', error);
+      throw new Error(
+        "Impossible de supprimer cette promotion. Vous ne pouvez supprimer que vos propres promotions."
+      );
+    }
+
+    setPromotions((prev) => prev.filter((p) => p.id !== promoId));
   };
 
   // Admin Governance Actions
@@ -1302,7 +1354,9 @@ export default function App() {
   });
 
   const showUnifiedVehicleCard = serviceFilter === 'all' || serviceFilter === 'vehicles';
-  const approvedPromotions = promotions.filter((p) => p.status === 'approved');
+  const approvedPromotions = [...promotions]
+    .filter((p) => p.status === 'active' || p.status === 'approved')
+    .sort((a, b) => (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || ''));
 
   const visibleNotifications = (isActualAdmin
     ? notifications.filter((n) => n.targetRoles.includes(currentRole))
@@ -1767,17 +1821,17 @@ export default function App() {
               </button>
             </section>
 
-            {/* DEDICATED PROMOTIONS SECTION (Admin-Validated Announcements) */}
+            {/* DEDICATED PROMOTIONS SECTION (Live Active Company Announcements) */}
             {approvedPromotions.length > 0 && (
               <section className="space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
                     <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
                       <Megaphone className="w-5 h-5 text-emerald-700" />
-                      <span>Promotions & Offres Validées</span>
+                      <span>Promotions & Offres en Cours</span>
                     </h2>
                     <p className="text-xs text-slate-600 mt-0.5">
-                      Annonces vérifiées et approuvées par l'administration {APP_OFFICIAL_NAME}.
+                      Offres promotionnelles publiées en direct par nos partenaires {APP_OFFICIAL_NAME}.
                     </p>
                   </div>
                 </div>
@@ -2096,6 +2150,8 @@ export default function App() {
               (u) => u.role === 'agent' && u.accountStatus === 'active'
             )}
             companyDisplayName={userProfile?.companyName || APP_OFFICIAL_NAME}
+            currentUserUid={firebaseUser?.uid || ''}
+            isAdmin={isActualAdmin}
             onValidateOrder={handleValidateOrder}
             onRefuseOrder={handleRefuseOrder}
             onDeleteOrder={handleDeleteOrder}
@@ -2104,6 +2160,8 @@ export default function App() {
             onAssignAgents={handleAssignAgents}
             onUpdateServiceBasePrice={handleUpdateServiceBasePrice}
             onCreatePromotion={handleCreatePromotion}
+            onUpdatePromotion={handleUpdatePromotion}
+            onDeletePromotion={handleDeletePromotion}
           />
         )}
 

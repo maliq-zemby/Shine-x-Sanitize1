@@ -12,7 +12,9 @@
         "lastName": { "type": "string", "maxLength": 80 },
         "photoURL": { "type": "string", "maxLength": 500 },
         "role": { "type": "string", "enum": ["client", "agent", "manager", "admin"] },
+        "status": { "type": "string", "enum": ["approved", "pending", "rejected", "banned"] },
         "accountStatus": { "type": "string", "enum": ["active", "pending", "rejected", "banned"] },
+        "rejectionReason": { "type": "string", "maxLength": 400 },
         "phone": { "type": "string", "minLength": 8, "maxLength": 40 },
         "acceptedTerms": { "type": "boolean" },
         "acceptedTermsAt": { "type": "string", "maxLength": 64 },
@@ -23,7 +25,7 @@
         "createdAt": { "type": "string", "maxLength": 64 },
         "updatedAt": { "type": "string", "maxLength": 64 }
       },
-      "required": ["uid", "email", "displayName", "role", "accountStatus", "phone", "acceptedTerms", "acceptedTermsAt", "createdAt", "updatedAt"]
+      "required": ["uid", "email", "displayName", "role", "status", "accountStatus", "phone", "acceptedTerms", "acceptedTermsAt", "createdAt", "updatedAt"]
     },
     "ServiceCatalogItem": {
       "title": "ServiceCatalogItem",
@@ -93,7 +95,7 @@
     },
     "Promotion": {
       "title": "Promotion",
-      "description": "Annonce promotionnelle soumise par un gérant et validée par l'administrateur",
+      "description": "Annonce promotionnelle publiée directement par un gérant validé et modifiable/supprimable par son créateur",
       "type": "object",
       "properties": {
         "id": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
@@ -103,9 +105,10 @@
         "serviceCategory": { "type": "string", "maxLength": 60 },
         "companyName": { "type": "string", "maxLength": 120 },
         "validUntil": { "type": "string", "maxLength": 40 },
-        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "status": { "type": "string", "enum": ["active", "pending", "approved", "rejected"] },
         "createdByUid": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "createdAt": { "type": "string", "maxLength": 64 }
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
       },
       "required": ["id", "title", "description", "discountLabel", "companyName", "status", "createdByUid", "createdAt"]
     },
@@ -115,7 +118,7 @@
       "type": "object",
       "properties": {
         "id": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "type": { "type": "string", "enum": ["new_booking", "agent_assigned", "new_registration", "promo_approved", "mission_completed", "client_thank_you", "agent_encouragement"] },
+        "type": { "type": "string", "enum": ["new_booking", "agent_assigned", "new_registration", "promo_approved", "mission_completed", "client_thank_you", "agent_encouragement", "registration_approved", "registration_rejected"] },
         "title": { "type": "string", "minLength": 2, "maxLength": 140 },
         "body": { "type": "string", "minLength": 2, "maxLength": 400 },
         "targetOwnerUid": { "type": "string", "maxLength": 128 },

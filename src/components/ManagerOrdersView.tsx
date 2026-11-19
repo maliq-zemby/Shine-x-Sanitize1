@@ -12,10 +12,12 @@ import {
   Megaphone,
   MessageCircle,
   Navigation,
+  Pencil,
   Plus,
   Tag,
   Trash2,
   Users,
+  X,
   XCircle,
 } from 'lucide-react';
 import { Booking, GpsPoint, Promotion, ServiceItem, UserProfile } from '../types';
@@ -37,6 +39,8 @@ interface ManagerOrdersViewProps {
   promotions: Promotion[];
   registeredAgents: UserProfile[];
   companyDisplayName?: string;
+  currentUserUid?: string;
+  isAdmin?: boolean;
   onValidateOrder: (bookingId: string) => void;
   onRefuseOrder: (bookingId: string, reason: string) => void;
   onDeleteOrder: (bookingId: string) => void;
@@ -44,7 +48,20 @@ interface ManagerOrdersViewProps {
   onUpdatePrice: (bookingId: string, newPrice: number, note: string) => void;
   onAssignAgents: (bookingId: string, agents: string[]) => void;
   onUpdateServiceBasePrice: (serviceId: string, newBasePrice: number) => void;
-  onCreatePromotion: (promo: Omit<Promotion, 'id' | 'status' | 'createdAt' | 'createdByUid'>) => void;
+  onCreatePromotion: (
+    promo: Omit<Promotion, 'id' | 'status' | 'createdAt' | 'createdByUid'>
+  ) => Promise<void> | void;
+  onUpdatePromotion: (
+    promoId: string,
+    updates: {
+      title: string;
+      description: string;
+      discountLabel: string;
+      serviceCategory?: string;
+      validUntil?: string;
+    }
+  ) => Promise<void> | void;
+  onDeletePromotion: (promoId: string) => Promise<void> | void;
 }
 
 export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
@@ -53,6 +70,8 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
   promotions,
   registeredAgents,
   companyDisplayName = 'Shine-x-Sanitize Alp Group',
+  currentUserUid = '',
+  isAdmin = false,
   onValidateOrder,
   onRefuseOrder,
   onDeleteOrder,
@@ -61,6 +80,8 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
   onAssignAgents,
   onUpdateServiceBasePrice,
   onCreatePromotion,
+  onUpdatePromotion,
+  onDeletePromotion,
 }) => {
   const [subTab, setSubTab] = useState<'orders' | 'pricing' | 'promos'>('orders');
   const [selectedMapBookingId, setSelectedMapBookingId] = useState<string | null>(
@@ -90,13 +111,22 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
   const [servicePriceDrafts, setServicePriceDrafts] = useState<Record<string, number>>({});
   const [savedPriceNotice, setSavedPriceNotice] = useState<string>('');
 
-  // Promotion form state
+  // Promotion form & edit/delete state
   const [promoTitle, setPromoTitle] = useState('');
   const [promoDiscount, setPromoDiscount] = useState('-15%');
   const [promoCategory, setPromoCategory] = useState('Véhicules');
   const [promoDescription, setPromoDescription] = useState('');
   const [promoValidUntil, setPromoValidUntil] = useState('31 Décembre 2026');
   const [promoNotice, setPromoNotice] = useState('');
+  const [promoError, setPromoError] = useState('');
+  const [editingPromoId, setEditingPromoId] = useState<string | null>(null);
+  const [editPromoTitle, setEditPromoTitle] = useState('');
+  const [editPromoDiscount, setEditPromoDiscount] = useState('');
+  const [editPromoCategory, setEditPromoCategory] = useState('Véhicules');
+  const [editPromoValidUntil, setEditPromoValidUntil] = useState('');
+  const [editPromoDescription, setEditPromoDescription] = useState('');
+  const [confirmDeletePromoId, setConfirmDeletePromoId] = useState<string | null>(null);
+  const [promoBusyId, setPromoBusyId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!selectedMapBookingId) return;
@@ -165,23 +195,116 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
     );
   };
 
-  const handleSubmitPromo = (e: React.FormEvent) => {
+  const handleSubmitPromo = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!promoTitle.trim() || !promoDescription.trim()) return;
-    onCreatePromotion({
-      title: promoTitle.trim(),
-      discountLabel: promoDiscount.trim() || 'Offre spéciale',
-      serviceCategory: promoCategory,
-      description: promoDescription.trim(),
-      companyName: companyDisplayName,
-      validUntil: promoValidUntil.trim(),
-    });
-    setPromoTitle('');
-    setPromoDescription('');
-    setPromoNotice(
-      "Annonce envoyée à l'administrateur. Dès validation, elle sera visible par tous les clients."
-    );
+    setPromoError('');
+    setPromoNotice('');
+    const titleTrimmed = promoTitle.trim();
+    const descTrimmed = promoDescription.trim();
+    const discountTrimmed = (promoDiscount.trim() || 'Offre spéciale').slice(0, 40);
+
+    if (titleTrimmed.length < 3) {
+      setPromoError("Le titre de l'offre doit contenir au moins 3 caractères.");
+      return;
+    }
+    if (descTrimmed.length < 5) {
+      setPromoError('Les détails de la promotion doivent contenir au moins 5 caractères.');
+      return;
+    }
+    if (discountTrimmed.length < 2) {
+      setPromoError("L'avantage ou la réduction doit contenir au moins 2 caractères.");
+      return;
+    }
+
+    try {
+      await onCreatePromotion({
+        title: titleTrimmed.slice(0, 120),
+        discountLabel: discountTrimmed,
+        serviceCategory: promoCategory,
+        description: descTrimmed.slice(0, 500),
+        companyName: companyDisplayName.slice(0, 120),
+        validUntil: promoValidUntil.trim().slice(0, 40),
+      });
+      setPromoTitle('');
+      setPromoDescription('');
+      setPromoNotice(
+        "Promotion publiée en direct ! Elle apparaît immédiatement pour tous les utilisateurs sur la page d'Accueil."
+      );
+    } catch (err) {
+      setPromoError(
+        err instanceof Error ? err.message : 'Impossible de publier cette promotion.'
+      );
+    }
   };
+
+  const startEditingPromo = (promo: Promotion) => {
+    setPromoError('');
+    setPromoNotice('');
+    setConfirmDeletePromoId(null);
+    setEditingPromoId(promo.id);
+    setEditPromoTitle(promo.title);
+    setEditPromoDiscount(promo.discountLabel);
+    setEditPromoCategory(promo.serviceCategory || 'Véhicules');
+    setEditPromoValidUntil(promo.validUntil || '');
+    setEditPromoDescription(promo.description);
+  };
+
+  const handleSaveEditedPromo = async (e: React.FormEvent, promoId: string) => {
+    e.preventDefault();
+    setPromoError('');
+    setPromoNotice('');
+    const titleTrimmed = editPromoTitle.trim();
+    const descTrimmed = editPromoDescription.trim();
+    const discountTrimmed = editPromoDiscount.trim();
+
+    if (titleTrimmed.length < 3 || descTrimmed.length < 5 || discountTrimmed.length < 2) {
+      setPromoError(
+        'Vérifiez le titre (3 car. min), la réduction (2 car. min) et la description (5 car. min).'
+      );
+      return;
+    }
+
+    setPromoBusyId(promoId);
+    try {
+      await onUpdatePromotion(promoId, {
+        title: titleTrimmed.slice(0, 120),
+        discountLabel: discountTrimmed.slice(0, 40),
+        serviceCategory: editPromoCategory,
+        validUntil: editPromoValidUntil.trim().slice(0, 40),
+        description: descTrimmed.slice(0, 500),
+      });
+      setEditingPromoId(null);
+      setPromoNotice("Promotion mise à jour en temps réel sur la page d'Accueil.");
+    } catch (err) {
+      setPromoError(
+        err instanceof Error ? err.message : 'Impossible de modifier cette promotion.'
+      );
+    } finally {
+      setPromoBusyId(null);
+    }
+  };
+
+  const handleConfirmDeletePromo = async (promoId: string) => {
+    setPromoError('');
+    setPromoNotice('');
+    setPromoBusyId(promoId);
+    try {
+      await onDeletePromotion(promoId);
+      setConfirmDeletePromoId(null);
+      if (editingPromoId === promoId) setEditingPromoId(null);
+      setPromoNotice("Promotion supprimée. Elle a été retirée de la page d'Accueil.");
+    } catch (err) {
+      setPromoError(
+        err instanceof Error ? err.message : 'Impossible de supprimer cette promotion.'
+      );
+    } finally {
+      setPromoBusyId(null);
+    }
+  };
+
+  const managedPromotions = [...promotions]
+    .filter((p) => isAdmin || !currentUserUid || p.createdByUid === currentUserUid)
+    .sort((a, b) => (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || ''));
 
   return (
     <div className="space-y-8">
@@ -833,14 +956,14 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <form
             onSubmit={handleSubmitPromo}
-            className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4"
+            className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4 self-start"
           >
             <div className="flex items-center gap-2 text-base font-bold text-slate-900">
               <Megaphone className="w-5 h-5 text-emerald-700" />
-              <span>Soumettre une Annonce Promotionnelle</span>
+              <span>Publier une Annonce Promotionnelle</span>
             </div>
             <p className="text-xs text-slate-600">
-              Une fois validée par l'administrateur central, votre offre promotionnelle apparaîtra instantanément chez tous les clients.
+              Votre offre est publiée immédiatement sans validation administrateur et apparaît en direct pour tous les utilisateurs sur la page d&apos;Accueil.
             </p>
 
             {promoNotice && (
@@ -848,15 +971,22 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
                 {promoNotice}
               </div>
             )}
+            {promoError && (
+              <div className="bg-rose-50 border border-rose-200 text-rose-900 rounded-xl px-4 py-2.5 text-xs font-medium">
+                {promoError}
+              </div>
+            )}
 
             <div className="space-y-1">
               <label htmlFor="promo-title" className="text-xs font-semibold text-slate-700">
-                Titre de l'offre *
+                Titre de l&apos;offre *
               </label>
               <input
                 id="promo-title"
                 type="text"
                 required
+                minLength={3}
+                maxLength={120}
                 value={promoTitle}
                 onChange={(e) => setPromoTitle(e.target.value)}
                 placeholder="Ex: Spécial Week-end Nettoyage BTP & Villa"
@@ -873,9 +1003,11 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
                   id="promo-disc"
                   type="text"
                   required
+                  minLength={2}
+                  maxLength={40}
                   value={promoDiscount}
                   onChange={(e) => setPromoDiscount(e.target.value)}
-                  placeholder="-20% ou Offert"
+                  placeholder="-20% ou 15 000 XAF"
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs text-slate-900"
                 />
               </div>
@@ -893,15 +1025,18 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
                   <option value="BTP">Nettoyage après travaux BTP</option>
                   <option value="Mobilier">Canapés & Mobilier</option>
                   <option value="Professionnel">Bureaux & Vitres</option>
+                  <option value="Literie">Matelas & Literie</option>
+                  <option value="Sol">Sols & Carrelages</option>
                 </select>
               </div>
               <div className="space-y-1">
                 <label htmlFor="promo-valid" className="text-xs font-semibold text-slate-700">
-                  Valable jusqu'au
+                  Valable jusqu&apos;au
                 </label>
                 <input
                   id="promo-valid"
                   type="text"
+                  maxLength={40}
                   value={promoValidUntil}
                   onChange={(e) => setPromoValidUntil(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs text-slate-900"
@@ -917,6 +1052,8 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
                 id="promo-desc"
                 rows={3}
                 required
+                minLength={5}
+                maxLength={500}
                 value={promoDescription}
                 onChange={(e) => setPromoDescription(e.target.value)}
                 placeholder="Décrivez les conditions et la zone (Libreville, Akanda, Owendo)..."
@@ -929,39 +1066,235 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
               className="w-full py-3 min-h-[44px] bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-xl transition-colors inline-flex items-center justify-center gap-2"
             >
               <Plus className="w-4 h-4" />
-              <span>Soumettre pour validation Admin</span>
+              <span>Publier la promotion immédiatement</span>
             </button>
           </form>
 
           <div className="space-y-3">
-            <h3 className="text-sm font-bold text-slate-900">Historique de vos annonces</h3>
-            {promotions.map((promo) => (
-              <div
-                key={promo.id}
-                className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm space-y-1.5"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-bold text-emerald-800">{promo.discountLabel}</span>
-                  <span
-                    className={`text-[11px] font-semibold ${
-                      promo.status === 'approved'
-                        ? 'text-emerald-700'
-                        : promo.status === 'rejected'
-                        ? 'text-rose-700'
-                        : 'text-amber-700'
-                    }`}
-                  >
-                    {promo.status === 'approved'
-                      ? 'Validée (Visible Clients)'
-                      : promo.status === 'rejected'
-                      ? 'Refusée'
-                      : 'En attente Admin'}
-                  </span>
-                </div>
-                <div className="text-sm font-bold text-slate-900">{promo.title}</div>
-                <p className="text-xs text-slate-600">{promo.description}</p>
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-sm font-bold text-slate-900">
+                Vos annonces promotionnelles ({managedPromotions.length})
+              </h3>
+              <span className="text-[11px] font-medium text-emerald-700">
+                Synchronisées en direct avec l&apos;Accueil
+              </span>
+            </div>
+
+            {managedPromotions.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-slate-200 p-6 text-center text-xs text-slate-500">
+                Aucune promotion publiée pour le moment. Utilisez le formulaire ci-contre pour lancer votre première offre en direct.
               </div>
-            ))}
+            ) : (
+              managedPromotions.map((promo) => {
+                const isOwnerOrAdmin = isAdmin || !currentUserUid || promo.createdByUid === currentUserUid;
+                const isEditing = editingPromoId === promo.id;
+                const isBusy = promoBusyId === promo.id;
+                const isPublished = promo.status === 'active' || promo.status === 'approved';
+
+                return (
+                  <div
+                    key={promo.id}
+                    className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm space-y-3"
+                  >
+                    {isEditing ? (
+                      <form
+                        onSubmit={(e) => handleSaveEditedPromo(e, promo.id)}
+                        className="space-y-3"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-bold text-emerald-800">
+                            Modifier la promotion
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setEditingPromoId(null)}
+                            className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600"
+                            aria-label="Fermer la modification"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[11px] font-semibold text-slate-700">
+                            Titre *
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            minLength={3}
+                            maxLength={120}
+                            value={editPromoTitle}
+                            onChange={(e) => setEditPromoTitle(e.target.value)}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-700"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                          <div className="space-y-1">
+                            <label className="text-[11px] font-semibold text-slate-700">
+                              Réduction / Prix *
+                            </label>
+                            <input
+                              type="text"
+                              required
+                              minLength={2}
+                              maxLength={40}
+                              value={editPromoDiscount}
+                              onChange={(e) => setEditPromoDiscount(e.target.value)}
+                              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[11px] font-semibold text-slate-700">
+                              Catégorie
+                            </label>
+                            <select
+                              value={editPromoCategory}
+                              onChange={(e) => setEditPromoCategory(e.target.value)}
+                              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900"
+                            >
+                              <option value="Véhicules">Véhicules & Mobilité</option>
+                              <option value="BTP">Nettoyage après travaux BTP</option>
+                              <option value="Mobilier">Canapés & Mobilier</option>
+                              <option value="Professionnel">Bureaux & Vitres</option>
+                              <option value="Literie">Matelas & Literie</option>
+                              <option value="Sol">Sols & Carrelages</option>
+                            </select>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[11px] font-semibold text-slate-700">
+                              Valable jusqu&apos;au
+                            </label>
+                            <input
+                              type="text"
+                              maxLength={40}
+                              value={editPromoValidUntil}
+                              onChange={(e) => setEditPromoValidUntil(e.target.value)}
+                              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[11px] font-semibold text-slate-700">
+                            Description *
+                          </label>
+                          <textarea
+                            rows={3}
+                            required
+                            minLength={5}
+                            maxLength={500}
+                            value={editPromoDescription}
+                            onChange={(e) => setEditPromoDescription(e.target.value)}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-700"
+                          />
+                        </div>
+
+                        <div className="flex items-center justify-end gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => setEditingPromoId(null)}
+                            className="px-3.5 py-2 min-h-[38px] bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl"
+                          >
+                            Annuler
+                          </button>
+                          <button
+                            type="submit"
+                            disabled={isBusy}
+                            className="px-4 py-2 min-h-[38px] bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white text-xs font-semibold rounded-xl inline-flex items-center gap-1.5"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                            <span>{isBusy ? 'Enregistrement...' : 'Enregistrer'}</span>
+                          </button>
+                        </div>
+                      </form>
+                    ) : (
+                      <>
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-bold text-emerald-800">
+                              {promo.discountLabel}
+                            </span>
+                            <span
+                              className={`text-[11px] font-semibold ${
+                                isPublished
+                                  ? 'text-emerald-700'
+                                  : promo.status === 'rejected'
+                                  ? 'text-rose-700'
+                                  : 'text-amber-700'
+                              }`}
+                            >
+                              {isPublished
+                                ? 'Active (Visible Accueil)'
+                                : promo.status === 'rejected'
+                                ? 'Désactivée'
+                                : 'Brouillon'}
+                            </span>
+                          </div>
+                          <div className="text-sm font-bold text-slate-900">{promo.title}</div>
+                          <p className="text-xs text-slate-600 leading-relaxed">
+                            {promo.description}
+                          </p>
+                          <div className="text-[11px] text-slate-500 flex flex-wrap items-center gap-2">
+                            <span>{promo.serviceCategory || 'Toutes catégories'}</span>
+                            {promo.validUntil && (
+                              <>
+                                <span aria-hidden="true">·</span>
+                                <span>Jusqu&apos;au {promo.validUntil}</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                        {isOwnerOrAdmin && (
+                          <div className="pt-2.5 border-t border-slate-100 flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => startEditingPromo(promo)}
+                              className="px-3.5 py-2 min-h-[38px] bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold rounded-xl inline-flex items-center gap-1.5"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                              <span>Modifier</span>
+                            </button>
+
+                            {confirmDeletePromoId === promo.id ? (
+                              <div className="inline-flex items-center gap-2 ml-auto">
+                                <button
+                                  type="button"
+                                  disabled={isBusy}
+                                  onClick={() => handleConfirmDeletePromo(promo.id)}
+                                  className="px-3.5 py-2 min-h-[38px] bg-rose-700 hover:bg-rose-800 disabled:opacity-60 text-white text-xs font-semibold rounded-xl inline-flex items-center gap-1.5"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <span>{isBusy ? 'Suppression...' : 'Confirmer'}</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeletePromoId(null)}
+                                  className="px-3 py-2 min-h-[38px] text-xs font-semibold text-slate-600 hover:text-slate-900"
+                                >
+                                  Annuler
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeletePromoId(promo.id)}
+                                className="px-3.5 py-2 min-h-[38px] bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold rounded-xl inline-flex items-center gap-1.5 ml-auto"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                <span>Supprimer</span>
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
       )}

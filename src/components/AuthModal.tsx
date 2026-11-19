@@ -100,7 +100,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       firstName: ADMIN_FIRST_NAME,
       lastName: ADMIN_LAST_NAME,
       role: 'admin',
+      status: 'approved',
       accountStatus: 'active',
+      rejectionReason: '',
       phone: ADMIN_WHATSAPP_PHONE,
       commune: 'Amissa Chantal, Akanda',
       acceptedTerms: true,
@@ -254,7 +256,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       await updateProfile(cred.user, { displayName: fullDisplayName }).catch(() => {});
 
       const now = new Date().toISOString();
-      const finalStatus = selectedRole === 'manager' ? 'pending' : 'active';
+      const isCompanyManager = selectedRole === 'manager';
+      const approvalStatus = isCompanyManager ? 'pending' : 'approved';
+      const accountStatus = isCompanyManager ? 'pending' : 'active';
 
       const profile: UserProfile = {
         uid: cred.user.uid,
@@ -263,12 +267,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         firstName: formattedFirstName,
         lastName: formattedLastName,
         role: selectedRole,
-        accountStatus: finalStatus,
+        status: approvalStatus,
+        accountStatus,
+        rejectionReason: '',
         phone: trimmedPhone,
         commune,
         acceptedTerms: true,
         acceptedTermsAt: now,
-        ...(selectedRole === 'manager'
+        ...(isCompanyManager
           ? {
               companyName: companyName.trim(),
               // Validation administrateur obligatoire avant tout accès à l'espace entreprise
