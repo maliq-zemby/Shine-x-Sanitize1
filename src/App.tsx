@@ -46,14 +46,16 @@ import { AuthModal } from './components/AuthModal';
 import { CompanyValidationGate } from './components/CompanyValidationGate';
 import { ClientReservationsView } from './components/ClientReservationsView';
 import { ManagerOrdersView } from './components/ManagerOrdersView';
+import { NetworkRequiredGate } from './components/NetworkRequiredGate';
 import {
   isNotificationFresh,
   LiveNotificationToast,
   NotificationBell,
 } from './components/NotificationCenter';
-import { OfflineIndicator, PWAInstallButton } from './components/PWAInstallButton';
+import { PWAInstallButton } from './components/PWAInstallButton';
 import { ServiceConfiguratorModal } from './components/ServiceConfiguratorModal';
 import { VehicleMobilityModal } from './components/VehicleMobilityModal';
+import { useNetworkStatus } from './hooks/useNetworkStatus';
 import {
   ADMIN_BOOTSTRAP_EMAIL,
   ADMIN_BOOTSTRAP_EMAILS,
@@ -158,6 +160,12 @@ function loadLocal<T>(key: string, fallback: T): T {
 }
 
 export default function App() {
+  const {
+    status: networkStatus,
+    isChecking: isCheckingNetwork,
+    retry: retryNetworkCheck,
+  } = useNetworkStatus();
+
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -374,6 +382,13 @@ export default function App() {
       unsub?.();
     };
   }, []);
+
+  // Dès que la connexion Internet est rétablie, s'assure que le profil authentifié est synchronisé
+  useEffect(() => {
+    if (networkStatus === 'online' && authReady && firebaseUser && !userProfile) {
+      syncSignedInUserProfile(firebaseUser).catch(() => {});
+    }
+  }, [networkStatus, authReady, firebaseUser, userProfile]);
 
   // Live listener on the signed-in company's own /users document while it is awaiting
   // validation (or rejected), so an admin decision unlocks / updates the screen instantly.
@@ -1370,6 +1385,17 @@ export default function App() {
     : notifications
   ).filter((n) => isNotificationFresh(n.createdAt));
 
+  // Blocage strict : aucun accès à l'interface ni fallback hors ligne tant qu'Internet réel n'est pas vérifié
+  if (networkStatus !== 'online') {
+    return (
+      <NetworkRequiredGate
+        status={networkStatus}
+        isChecking={isCheckingNetwork}
+        onRetry={retryNetworkCheck}
+      />
+    );
+  }
+
   if (!authReady) {
     return (
       <div className="min-h-screen bg-[#F8FAF9] flex flex-col items-center justify-center p-6 gap-4">
@@ -2310,8 +2336,6 @@ export default function App() {
           setLiveToast(null);
         }}
       />
-
-      <OfflineIndicator />
     </div>
   );
 }
