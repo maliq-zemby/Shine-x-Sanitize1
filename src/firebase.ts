@@ -1,4 +1,5 @@
 import { initializeApp, type FirebaseOptions } from 'firebase/app';
+import { getAnalytics, isSupported as isAnalyticsSupported, type Analytics } from 'firebase/analytics';
 import {
   browserLocalPersistence,
   getAuth,
@@ -6,47 +7,32 @@ import {
   setPersistence,
 } from 'firebase/auth';
 import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
-import appletConfig from '../firebase-applet-config.json';
 import { ADMIN_BOOTSTRAP_DIGEST } from './data/mockData';
 
-// Source of truth: firebase-applet-config.json (Firebase project "shinexsanitize2").
-// Optional VITE_FIREBASE_* variables can replace it, but only as a complete set
-// (at least API key + project ID) so a key from one project is never mixed with
-// the identifiers of another one.
-const env = import.meta.env;
-const useEnvConfig = Boolean(env.VITE_FIREBASE_API_KEY && env.VITE_FIREBASE_PROJECT_ID);
-
-const firebaseConfig: FirebaseOptions = useEnvConfig
-  ? {
-      apiKey: env.VITE_FIREBASE_API_KEY,
-      authDomain:
-        env.VITE_FIREBASE_AUTH_DOMAIN || `${env.VITE_FIREBASE_PROJECT_ID}.firebaseapp.com`,
-      projectId: env.VITE_FIREBASE_PROJECT_ID,
-      storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || undefined,
-      messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || undefined,
-      appId: env.VITE_FIREBASE_APP_ID || undefined,
-      measurementId: env.VITE_FIREBASE_MEASUREMENT_ID || undefined,
-    }
-  : {
-      apiKey: appletConfig.apiKey,
-      authDomain: appletConfig.authDomain,
-      projectId: appletConfig.projectId,
-      storageBucket: appletConfig.storageBucket || undefined,
-      messagingSenderId: appletConfig.messagingSenderId || undefined,
-      appId: appletConfig.appId || undefined,
-      measurementId: appletConfig.measurementId || undefined,
-    };
-
-// Firestore database ID comes from the config ("(default)" unless a named database is set).
-const firestoreDatabaseId = useEnvConfig
-  ? env.VITE_FIREBASE_DATABASE_ID || '(default)'
-  : appletConfig.firestoreDatabaseId || '(default)';
+// Firebase project "shinexsanitize2" — the only project this app connects to.
+// Intentionally not overridable via environment variables so the app can never
+// be pointed at (or mix identifiers from) another Firebase project.
+const firebaseConfig: FirebaseOptions = {
+  apiKey: 'AIzaSyCB4t-bhTiOpd-1vpfJ0uYOiMfAyLGfSxc',
+  authDomain: 'shinexsanitize2.firebaseapp.com',
+  projectId: 'shinexsanitize2',
+  storageBucket: 'shinexsanitize2.firebasestorage.app',
+  messagingSenderId: '710885153983',
+  appId: '1:710885153983:web:1a68b273869b1f18127a0a',
+  measurementId: 'G-C22H4T9GVY',
+};
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firestoreDatabaseId);
+export const db = getFirestore(app);
 export const auth = getAuth(app);
-export const firebaseProjectId = firebaseConfig.projectId ?? appletConfig.projectId;
-export const firebaseAuthDomain = firebaseConfig.authDomain ?? appletConfig.authDomain;
+export const firebaseProjectId = firebaseConfig.projectId as string;
+export const firebaseAuthDomain = firebaseConfig.authDomain as string;
+
+// Analytics only runs where the browser supports it (not in SSR/tests or
+// when IndexedDB/cookies are blocked), so it never breaks app startup.
+export const analyticsReady: Promise<Analytics | null> = isAnalyticsSupported()
+  .then((supported) => (supported ? getAnalytics(app) : null))
+  .catch(() => null);
 
 export function normalizeNameSlug(value: string): string {
   return value
