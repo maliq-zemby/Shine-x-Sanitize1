@@ -119,6 +119,11 @@ export interface Booking {
     vehicleSeats?: number;
   };
   clientOfferPrice: number;
+  originalPrice?: number;
+  discountAmount?: number;
+  appliedPromotionId?: string;
+  appliedPromotionTitle?: string;
+  appliedPromotionDiscount?: string;
   managerCounterPrice?: number;
   priceAdjustmentNote?: string;
   finalPrice: number;

@@ -105,7 +105,7 @@ service cloud.firestore {
 
     function isValidBooking(data) {
       return data.keys().hasAll(['id', 'ownerUid', 'serviceId', 'serviceName', 'serviceCategory', 'clientName', 'clientPhone', 'commune', 'address', 'clientCoords', 'details', 'clientOfferPrice', 'finalPrice', 'status', 'assignedAgents', 'gpsActive', 'clientGpsActive', 'beforePhotos', 'afterPhotos', 'paymentMethod', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['id', 'ownerUid', 'serviceId', 'serviceName', 'serviceCategory', 'vehicleType', 'clientName', 'clientPhone', 'commune', 'address', 'clientCoords', 'details', 'clientOfferPrice', 'managerCounterPrice', 'priceAdjustmentNote', 'finalPrice', 'status', 'rejectionReason', 'assignedAgents', 'gpsActive', 'clientGpsActive', 'agentGps', 'startedAt', 'completedAt', 'beforePhotos', 'afterPhotos', 'photosArchivedAt', 'paymentMethod', 'rating', 'review', 'reviewSubmittedAt', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'ownerUid', 'serviceId', 'serviceName', 'serviceCategory', 'vehicleType', 'clientName', 'clientPhone', 'commune', 'address', 'clientCoords', 'details', 'clientOfferPrice', 'originalPrice', 'discountAmount', 'appliedPromotionId', 'appliedPromotionTitle', 'appliedPromotionDiscount', 'managerCounterPrice', 'priceAdjustmentNote', 'finalPrice', 'status', 'rejectionReason', 'assignedAgents', 'gpsActive', 'clientGpsActive', 'agentGps', 'startedAt', 'completedAt', 'beforePhotos', 'afterPhotos', 'photosArchivedAt', 'paymentMethod', 'rating', 'review', 'reviewSubmittedAt', 'createdAt', 'updatedAt'])
         && isValidId(data.id)
         && data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128
         && data.serviceId is string && data.serviceId.size() <= 64
@@ -119,6 +119,11 @@ service cloud.firestore {
         && data.clientCoords is map
         && data.details is map
         && data.clientOfferPrice is number && data.clientOfferPrice >= 1000
+        && (!('originalPrice' in data) || (data.originalPrice is number && data.originalPrice >= 1000))
+        && (!('discountAmount' in data) || (data.discountAmount is number && data.discountAmount >= 0))
+        && (!('appliedPromotionId' in data) || (data.appliedPromotionId is string && data.appliedPromotionId.size() <= 64))
+        && (!('appliedPromotionTitle' in data) || (data.appliedPromotionTitle is string && data.appliedPromotionTitle.size() <= 140))
+        && (!('appliedPromotionDiscount' in data) || (data.appliedPromotionDiscount is string && data.appliedPromotionDiscount.size() <= 40))
         && (!('managerCounterPrice' in data) || data.managerCounterPrice is number)
         && (!('priceAdjustmentNote' in data) || (data.priceAdjustmentNote is string && data.priceAdjustmentNote.size() <= 300))
         && data.finalPrice is number && data.finalPrice >= 1000

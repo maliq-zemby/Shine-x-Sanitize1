@@ -6,7 +6,7 @@ import {
   indexedDBLocalPersistence,
   setPersistence,
 } from 'firebase/auth';
-import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
+import { doc, getDocFromServer, initializeFirestore } from 'firebase/firestore';
 import { ADMIN_BOOTSTRAP_DIGEST } from './data/mockData';
 
 // Firebase project "shinexsanitize2" — the only project this app connects to.
@@ -23,7 +23,9 @@ const firebaseConfig: FirebaseOptions = {
 };
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app);
+export const db = initializeFirestore(app, {
+  experimentalForceLongPolling: true,
+});
 export const auth = getAuth(app);
 export const firebaseProjectId = firebaseConfig.projectId as string;
 export const firebaseAuthDomain = firebaseConfig.authDomain as string;
@@ -90,7 +92,7 @@ export function formatClassicAuthError(err: unknown): string {
     return `Clé API Firebase non reconnue pour « ${firebaseProjectId} ». Vérifiez la configuration Firebase et que Authentication est activé.`;
   }
   if (code === 'auth/network-request-failed') {
-    return "Erreur réseau pendant l'authentification. Vérifiez votre connexion Internet et réessayez.";
+    return "Erreur réseau pendant l'authentification (auth/network-request-failed). Vérifiez votre connexion Internet, désactivez un éventuel VPN ou bloqueur réseau, ou testez sur un autre réseau (Wi-Fi / 4G) si le problème persiste.";
   }
   return err instanceof Error
     ? err.message

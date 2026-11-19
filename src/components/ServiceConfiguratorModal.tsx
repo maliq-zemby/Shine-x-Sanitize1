@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Bike, Car, Check, LocateFixed, X } from 'lucide-react';
+import { Bike, Car, Check, LocateFixed, Tag, X } from 'lucide-react';
 import {
   COMMUNES,
   VEHICLE_BRANDS,
@@ -13,14 +13,17 @@ import {
   QUARTIERS_GRAND_LIBREVILLE,
   matchLocalQuartier,
 } from '../data/quartiers';
-import { Booking, GpsPoint, PaymentMethod, ServiceItem } from '../types';
+import { Booking, GpsPoint, PaymentMethod, Promotion, ServiceItem } from '../types';
 import { HIGH_ACCURACY_GEO_OPTIONS } from '../utils/geocoding';
+import { computeDiscountedPrice } from '../utils/promotions';
 
 interface ServiceConfiguratorModalProps {
   service: ServiceItem;
   ownerUid: string;
   defaultClientName?: string;
   defaultClientPhone?: string;
+  appliedPromotion?: Promotion | null;
+  onRemovePromotion?: () => void;
   onClose: () => void;
   onSubmitBooking: (booking: Booking) => void;
 }
@@ -30,6 +33,8 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
   ownerUid,
   defaultClientName = '',
   defaultClientPhone = '+241 ',
+  appliedPromotion = null,
+  onRemovePromotion,
   onClose,
   onSubmitBooking,
 }) => {
@@ -56,6 +61,10 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
   const [customBrand, setCustomBrand] = useState('');
   const [vehicleModel, setVehicleModel] = useState('');
   const [vehicleSeats, setVehicleSeats] = useState<number>(5);
+  const [promoRemoved, setPromoRemoved] = useState(false);
+  const [hasManualOffer, setHasManualOffer] = useState(false);
+
+  const activePromotion = !promoRemoved ? appliedPromotion : null;
 
   const seatPriceDelta = (seats: number) => (seats >= 7 ? 7000 : seats === 2 ? -2000 : 0);
   const baseAdjustedPrice = isFourWheelVehicle
@@ -64,31 +73,63 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
 
   const optionsTotal = selectedOptions.reduce((sum, opt) => sum + getOptionPrice(opt), 0);
   const recommendedPrice = baseAdjustedPrice + optionsTotal;
+  const promoBreakdown = activePromotion
+    ? computeDiscountedPrice(recommendedPrice, activePromotion)
+    : null;
+  const targetRecommendedOffer = promoBreakdown ? promoBreakdown.finalPrice : recommendedPrice;
 
   const [clientOfferPrice, setClientOfferPrice] = useState(() => {
     const initialOptionPrice = service.availableOptions[0]
       ? getOptionPrice(service.availableOptions[0])
       : 0;
-    return service.basePrice + initialOptionPrice;
+    const initialRaw = service.basePrice + initialOptionPrice;
+    return activePromotion
+      ? computeDiscountedPrice(initialRaw, activePromotion).finalPrice
+      : initialRaw;
   });
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('Airtel Money');
+
+  const computeRecommendedFor = (seats: number, options: string[], promo: Promotion | null) => {
+    const nextBase = isFourWheelVehicle
+      ? service.basePrice + seatPriceDelta(seats)
+      : service.basePrice;
+    const nextOpts = options.reduce((sum, opt) => sum + getOptionPrice(opt), 0);
+    const nextRaw = nextBase + nextOpts;
+    return promo ? computeDiscountedPrice(nextRaw, promo).finalPrice : nextRaw;
+  };
 
   const handleSeatsChange = (seats: number) => {
     const prevDelta = seatPriceDelta(vehicleSeats);
     const nextDelta = seatPriceDelta(seats);
     setVehicleSeats(seats);
-    setClientOfferPrice((prev) => Math.max(2000, prev - prevDelta + nextDelta));
+    if (!hasManualOffer) {
+      setClientOfferPrice(computeRecommendedFor(seats, selectedOptions, activePromotion));
+    } else {
+      setClientOfferPrice((prev) => Math.max(1000, prev - prevDelta + nextDelta));
+    }
   };
 
   const toggleOption = (opt: string) => {
     const optionPrice = getOptionPrice(opt);
     const exists = selectedOptions.includes(opt);
-    setSelectedOptions((prev) =>
-      exists ? prev.filter((item) => item !== opt) : [...prev, opt]
-    );
-    setClientOfferPrice((prev) =>
-      Math.max(2000, exists ? prev - optionPrice : prev + optionPrice)
-    );
+    const nextOptions = exists
+      ? selectedOptions.filter((item) => item !== opt)
+      : [...selectedOptions, opt];
+    setSelectedOptions(nextOptions);
+    if (!hasManualOffer) {
+      setClientOfferPrice(computeRecommendedFor(vehicleSeats, nextOptions, activePromotion));
+    } else {
+      setClientOfferPrice((prev) =>
+        Math.max(1000, exists ? prev - optionPrice : prev + optionPrice)
+      );
+    }
+  };
+
+  const handleRemovePromo = () => {
+    setPromoRemoved(true);
+    setHasManualOffer(false);
+    setClientOfferPrice(recommendedPrice);
+    onRemovePromotion?.();
   };
 
   const activeCommuneObj = COMMUNES.find((c) => c.name === commune) || COMMUNES[0];
@@ -174,6 +215,7 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
           neighborhood: selectedQuartier.label,
         };
 
+    const finalSubmittedOffer = Math.max(1000, Math.round(clientOfferPrice));
     const nowIso = new Date().toISOString();
     const newBooking: Booking = {
       id: `SHINE-${Math.floor(1000 + Math.random() * 9000)}`,
@@ -208,8 +250,17 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
           ? { vehicleModel: vehicleModel.trim() }
           : {}),
       },
-      clientOfferPrice,
-      finalPrice: clientOfferPrice,
+      clientOfferPrice: finalSubmittedOffer,
+      ...(activePromotion && promoBreakdown
+        ? {
+            originalPrice: promoBreakdown.originalPrice,
+            discountAmount: promoBreakdown.discountAmount,
+            appliedPromotionId: activePromotion.id.slice(0, 64),
+            appliedPromotionTitle: activePromotion.title.slice(0, 140),
+            appliedPromotionDiscount: promoBreakdown.shortLabel.slice(0, 40),
+          }
+        : {}),
+      finalPrice: finalSubmittedOffer,
       status: 'pending_negotiation',
       assignedAgents: [],
       gpsActive: false,
@@ -250,6 +301,29 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
             <p className="text-xs text-slate-500 mt-1">{service.description}</p>
           </div>
         </div>
+
+        {activePromotion && promoBreakdown && (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-start gap-2.5 text-xs text-emerald-950">
+              <Tag className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
+              <div>
+                <div className="font-bold">
+                  Promotion appliquée : {promoBreakdown.shortLabel} · {activePromotion.title}
+                </div>
+                <div className="text-[11px] text-emerald-800">
+                  Offre {activePromotion.companyName} — Réduction calculée automatiquement sur votre total.
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleRemovePromo}
+              className="px-3 py-1.5 rounded-lg bg-white border border-rose-200 hover:bg-rose-50 text-rose-700 text-[11px] font-semibold transition-colors shrink-0"
+            >
+              Retirer la promotion
+            </button>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           {isFourWheelVehicle && (
@@ -561,20 +635,35 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-1">
               <label htmlFor="cfg-offer" className="text-xs font-semibold text-slate-700">
-                Votre proposition de tarif (XAF)
+                Votre proposition de tarif (FCFA / XAF)
               </label>
               <input
                 id="cfg-offer"
                 type="number"
                 value={clientOfferPrice}
-                onChange={(e) => setClientOfferPrice(Number(e.target.value))}
-                step={1000}
-                min={2000}
+                onChange={(e) => {
+                  setHasManualOffer(true);
+                  setClientOfferPrice(Number(e.target.value));
+                }}
+                step={500}
+                min={1000}
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-900 tabular-nums focus:outline-none focus:ring-2 focus:ring-emerald-700"
               />
               <p className="text-[11px] text-slate-500 tabular-nums">
-                Référence : {baseAdjustedPrice.toLocaleString()} XAF (base) + {optionsTotal.toLocaleString()} XAF (options) ={' '}
-                <strong className="text-slate-800">{recommendedPrice.toLocaleString()} XAF</strong>
+                Référence : {baseAdjustedPrice.toLocaleString('fr-FR')} FCFA (base) +{' '}
+                {optionsTotal.toLocaleString('fr-FR')} FCFA (options) ={' '}
+                <strong className="text-slate-800">
+                  {recommendedPrice.toLocaleString('fr-FR')} FCFA
+                </strong>
+                {activePromotion && promoBreakdown && (
+                  <>
+                    {' '}
+                    → Promo :{' '}
+                    <strong className="text-emerald-800">
+                      {targetRecommendedOffer.toLocaleString('fr-FR')} FCFA
+                    </strong>
+                  </>
+                )}
               </p>
             </div>
 
@@ -596,11 +685,57 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
             </div>
           </div>
 
+          {activePromotion && promoBreakdown && (
+            <div className="bg-slate-50 border border-emerald-200 rounded-xl p-4 space-y-2 text-xs">
+              <div className="font-bold text-slate-900 flex items-center justify-between gap-2">
+                <span>Récapitulatif de prix avec promotion</span>
+                <button
+                  type="button"
+                  onClick={handleRemovePromo}
+                  className="text-[11px] font-semibold text-rose-700 hover:text-rose-800 underline"
+                >
+                  Retirer la promotion
+                </button>
+              </div>
+              <div className="flex items-center justify-between text-slate-500">
+                <span>Prix initial</span>
+                <span className="line-through tabular-nums">
+                  {promoBreakdown.originalPrice.toLocaleString('fr-FR')} FCFA
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-emerald-700 font-semibold">
+                <span>
+                  Promotion &quot;{promoBreakdown.offerLineLabel}&quot;
+                </span>
+                <span className="tabular-nums">
+                  -{promoBreakdown.discountAmount.toLocaleString('fr-FR')} FCFA
+                </span>
+              </div>
+              <div className="flex items-center justify-between pt-2 border-t border-slate-200 text-sm font-extrabold text-emerald-900">
+                <span>Total à payer</span>
+                <span className="tabular-nums">
+                  {Math.max(1000, Math.round(clientOfferPrice)).toLocaleString('fr-FR')} FCFA
+                </span>
+              </div>
+            </div>
+          )}
+
           <div className="pt-4 border-t border-slate-100 flex items-center justify-between gap-4">
             <div>
-              <div className="text-xs text-slate-500">Montant proposé au gérant</div>
-              <div className="text-lg font-bold text-slate-900 tabular-nums">
-                {clientOfferPrice.toLocaleString()} XAF
+              <div className="text-xs text-slate-500">
+                {activePromotion && promoBreakdown
+                  ? 'Total à payer (remise incluse)'
+                  : 'Montant proposé au gérant'}
+              </div>
+              <div className="flex items-baseline gap-2.5">
+                {activePromotion && promoBreakdown && (
+                  <span className="text-xs text-slate-400 line-through tabular-nums">
+                    {promoBreakdown.originalPrice.toLocaleString('fr-FR')} FCFA
+                  </span>
+                )}
+                <div className="text-lg font-bold text-emerald-900 tabular-nums">
+                  {Math.max(1000, Math.round(clientOfferPrice)).toLocaleString('fr-FR')} FCFA
+                </div>
               </div>
             </div>
 

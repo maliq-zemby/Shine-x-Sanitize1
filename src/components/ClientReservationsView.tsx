@@ -364,6 +364,24 @@ export const ClientReservationsView: React.FC<ClientReservationsViewProps> = ({
 
                 <div className="bg-slate-50 p-4 rounded-xl space-y-1.5">
                   <div className="font-semibold text-slate-700">Tarification & Paiement</div>
+                  {booking.appliedPromotionTitle && booking.originalPrice !== undefined && (
+                    <>
+                      <div className="flex items-center justify-between text-slate-500">
+                        <span>Prix initial :</span>
+                        <span className="line-through tabular-nums">
+                          {booking.originalPrice.toLocaleString()} XAF
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-emerald-700 font-semibold">
+                        <span className="truncate pr-2">
+                          Promo ({booking.appliedPromotionDiscount || ''} {booking.appliedPromotionTitle}) :
+                        </span>
+                        <span className="tabular-nums shrink-0">
+                          -{(booking.discountAmount ?? 0).toLocaleString()} XAF
+                        </span>
+                      </div>
+                    </>
+                  )}
                   <div className="flex items-center justify-between text-slate-600">
                     <span>Votre proposition :</span>
                     <span className="font-semibold text-slate-900 tabular-nums">

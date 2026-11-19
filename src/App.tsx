@@ -37,6 +37,7 @@ import {
   ShieldCheck,
   Sliders,
   Sparkles,
+  Tag,
   Wrench,
 } from 'lucide-react';
 import { AdminDashboardView } from './components/AdminDashboardView';
@@ -103,6 +104,7 @@ import {
   getCompanyValidationStatus,
   isCompanyAccessBlocked,
 } from './utils/companyValidation';
+import { matchServiceForPromotion, parsePromotionDiscount } from './utils/promotions';
 
 type ActiveTab = ActiveTabId;
 
@@ -183,6 +185,7 @@ export default function App() {
   const notifSnapshotReadyRef = useRef(false);
 
   const [selectedService, setSelectedService] = useState<ServiceItem | null>(null);
+  const [activePromotion, setActivePromotion] = useState<Promotion | null>(null);
   const [pendingBooking, setPendingBooking] = useState<Booking | null>(null);
   const [showVehicleMobilityModal, setShowVehicleMobilityModal] = useState(false);
   const [commissionRate, setCommissionRate] = useState<number>(10);
@@ -736,6 +739,7 @@ export default function App() {
     if (!firebaseUser || !userProfile) {
       setPendingBooking(newBooking);
       setSelectedService(null);
+      setActivePromotion(null);
       setShowAuthModal(true);
       return;
     }
@@ -749,6 +753,7 @@ export default function App() {
 
     setBookings((prev) => [scopedBooking, ...prev]);
     setSelectedService(null);
+    setActivePromotion(null);
     setActiveTab('mes_reservations');
 
     try {
@@ -1735,7 +1740,10 @@ export default function App() {
 
                   <button
                     type="button"
-                    onClick={() => setShowVehicleMobilityModal(true)}
+                    onClick={() => {
+                      setActivePromotion(null);
+                      setShowVehicleMobilityModal(true);
+                    }}
                     className="px-5 py-3 min-h-[48px] bg-white/15 hover:bg-white/25 backdrop-blur-md text-white text-xs sm:text-sm font-semibold rounded-xl border border-white/25 transition-colors inline-flex items-center gap-2 whitespace-nowrap"
                   >
                     <Car className="w-4 h-4" />
@@ -1784,7 +1792,10 @@ export default function App() {
               ) : (
                 <button
                   type="button"
-                  onClick={() => setShowVehicleMobilityModal(true)}
+                  onClick={() => {
+                    setActivePromotion(null);
+                    setShowVehicleMobilityModal(true);
+                  }}
                   className="text-left bg-white hover:border-emerald-700 border border-slate-200 rounded-2xl p-5 shadow-sm transition-colors flex items-start justify-between gap-4"
                 >
                   <div className="space-y-1.5">
@@ -1803,6 +1814,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => {
+                  setActivePromotion(null);
                   const btpSrv = services.find((s) => s.category === 'BTP');
                   if (btpSrv) setSelectedService(btpSrv);
                 }}
@@ -1858,14 +1870,14 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => {
-                          if (promo.serviceCategory === 'Véhicules') {
+                          setActivePromotion(promo);
+                          const matchedService = matchServiceForPromotion(promo, services);
+                          if (matchedService) {
+                            setSelectedService(matchedService);
+                          } else if (promo.serviceCategory === 'Véhicules') {
                             setShowVehicleMobilityModal(true);
                           } else {
-                            const match = services.find(
-                              (s) => s.category === promo.serviceCategory
-                            );
-                            if (match) setSelectedService(match);
-                            else setActiveTab('services');
+                            setActiveTab('services');
                           }
                         }}
                         className="self-start px-4 py-2 min-h-[40px] bg-white hover:bg-emerald-50 text-emerald-950 text-xs font-bold rounded-xl transition-colors inline-flex items-center gap-1.5"
@@ -1968,7 +1980,10 @@ export default function App() {
                     <div className="p-5 pt-0">
                       <button
                         type="button"
-                        onClick={() => setShowVehicleMobilityModal(true)}
+                        onClick={() => {
+                          setActivePromotion(null);
+                          setShowVehicleMobilityModal(true);
+                        }}
                         className="w-full py-2.5 min-h-[44px] px-4 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-2"
                       >
                         <Car className="w-4 h-4" />
@@ -2013,7 +2028,10 @@ export default function App() {
                     <div className="p-5 pt-0">
                       <button
                         type="button"
-                        onClick={() => setSelectedService(service)}
+                        onClick={() => {
+                          setActivePromotion(null);
+                          setSelectedService(service);
+                        }}
                         className="w-full py-2.5 min-h-[44px] px-4 bg-slate-900 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-2"
                       >
                         <Sliders className="w-3.5 h-3.5" />
@@ -2040,6 +2058,26 @@ export default function App() {
                 </p>
               </div>
             </div>
+
+            {activePromotion && (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5 text-xs text-emerald-950">
+                  <Tag className="w-4 h-4 text-emerald-700 shrink-0" />
+                  <span>
+                    Promotion active :{' '}
+                    <strong>{parsePromotionDiscount(activePromotion).shortLabel}</strong> ·{' '}
+                    {activePromotion.title}. Choisissez un service ci-dessous pour appliquer la remise automatiquement.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActivePromotion(null)}
+                  className="px-3 py-1.5 rounded-lg bg-white border border-rose-200 hover:bg-rose-50 text-rose-700 text-xs font-semibold"
+                >
+                  Retirer l&apos;offre
+                </button>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {/* Unified Vehicle Card */}
@@ -2216,11 +2254,16 @@ export default function App() {
       {showVehicleMobilityModal && (
         <VehicleMobilityModal
           vehicleServices={vehicleServices}
+          appliedPromotion={activePromotion}
+          onClearPromotion={() => setActivePromotion(null)}
           onSelectVehicleService={(srv) => {
             setShowVehicleMobilityModal(false);
             setSelectedService(srv);
           }}
-          onClose={() => setShowVehicleMobilityModal(false)}
+          onClose={() => {
+            setShowVehicleMobilityModal(false);
+            setActivePromotion(null);
+          }}
         />
       )}
 
@@ -2231,7 +2274,12 @@ export default function App() {
           ownerUid={firebaseUser?.uid || ''}
           defaultClientName={userProfile?.displayName || ''}
           defaultClientPhone={userProfile?.phone || '+241 '}
-          onClose={() => setSelectedService(null)}
+          appliedPromotion={activePromotion}
+          onRemovePromotion={() => setActivePromotion(null)}
+          onClose={() => {
+            setSelectedService(null);
+            setActivePromotion(null);
+          }}
           onSubmitBooking={handleCreateBooking}
         />
       )}

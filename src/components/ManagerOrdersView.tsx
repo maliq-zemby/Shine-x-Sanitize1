@@ -449,6 +449,17 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
                     </div>
 
                     <div className="text-right shrink-0">
+                      {booking.appliedPromotionTitle && booking.originalPrice !== undefined && (
+                        <div className="text-[11px] font-semibold text-emerald-700 mb-0.5">
+                          Promo {booking.appliedPromotionDiscount || ''} · {booking.appliedPromotionTitle}{' '}
+                          (<span className="line-through text-slate-400 tabular-nums">
+                            {booking.originalPrice.toLocaleString()} XAF
+                          </span>{' '}
+                          <span className="tabular-nums">
+                            -{(booking.discountAmount ?? 0).toLocaleString()} XAF
+                          </span>)
+                        </div>
+                      )}
                       <div className="text-xs text-slate-500">
                         Offre client :{' '}
                         <span className="font-semibold text-slate-900 tabular-nums">

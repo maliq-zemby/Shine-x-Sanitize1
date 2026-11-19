@@ -49,6 +49,26 @@ interface AuthModalProps {
 
 const WHATSAPP_INTERNATIONAL_REGEX = /^\+[1-9][0-9\s\-]{6,30}$/;
 
+async function withNetworkRetry<T>(
+  operation: () => Promise<T>,
+  maxRetries = 2
+): Promise<T> {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await operation();
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code || '';
+      if (code === 'auth/network-request-failed' && attempt < maxRetries) {
+        attempt += 1;
+        await new Promise((resolve) => setTimeout(resolve, 650 * attempt));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
 export const AuthModal: React.FC<AuthModalProps> = ({
   initialMode = 'login',
   onAuthComplete,
@@ -131,7 +151,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setLoading(true);
     try {
       await authPersistenceReady;
-      const cred = await signInWithEmailAndPassword(auth, authEmail, password);
+      const cred = await withNetworkRetry(() =>
+        signInWithEmailAndPassword(auth, authEmail, password)
+      );
 
       if (isAdminCandidate) {
         const snap = await getDoc(doc(db, 'users', cred.user.uid)).catch(() => null);
@@ -161,7 +183,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
       if (canBootstrapAdmin) {
         try {
-          const cred = await createUserWithEmailAndPassword(auth, authEmail, password);
+          const cred = await withNetworkRetry(() =>
+            createUserWithEmailAndPassword(auth, authEmail, password)
+          );
           await updateProfile(cred.user, { displayName: ADMIN_DISPLAY_NAME }).catch(() => {});
           await onAuthComplete(buildAdminProfile(cred.user.uid));
           return;
@@ -207,13 +231,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         await authPersistenceReady;
         let uid: string;
         try {
-          const cred = await createUserWithEmailAndPassword(auth, authEmail, password);
+          const cred = await withNetworkRetry(() =>
+            createUserWithEmailAndPassword(auth, authEmail, password)
+          );
           await updateProfile(cred.user, { displayName: ADMIN_DISPLAY_NAME }).catch(() => {});
           uid = cred.user.uid;
         } catch (createErr: unknown) {
           const code = (createErr as { code?: string })?.code || '';
           if (code === 'auth/email-already-in-use') {
-            const cred = await signInWithEmailAndPassword(auth, authEmail, password);
+            const cred = await withNetworkRetry(() =>
+              signInWithEmailAndPassword(auth, authEmail, password)
+            );
             uid = cred.user.uid;
           } else {
             throw createErr;
@@ -248,7 +276,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setLoading(true);
     try {
       await authPersistenceReady;
-      const cred = await createUserWithEmailAndPassword(auth, authEmail, password);
+      const cred = await withNetworkRetry(() =>
+        createUserWithEmailAndPassword(auth, authEmail, password)
+      );
       const formattedLastName = trimmedLastName.toUpperCase();
       const formattedFirstName = trimmedFirstName;
       const fullDisplayName = `${formattedLastName} ${formattedFirstName}`;

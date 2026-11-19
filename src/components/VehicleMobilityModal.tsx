@@ -1,9 +1,12 @@
 import React from 'react';
-import { ArrowRight, Bike, Car, X } from 'lucide-react';
-import { ServiceItem, VehicleCategory } from '../types';
+import { ArrowRight, Bike, Car, Tag, X } from 'lucide-react';
+import { Promotion, ServiceItem, VehicleCategory } from '../types';
+import { parsePromotionDiscount } from '../utils/promotions';
 
 interface VehicleMobilityModalProps {
   vehicleServices: ServiceItem[];
+  appliedPromotion?: Promotion | null;
+  onClearPromotion?: () => void;
   onSelectVehicleService: (service: ServiceItem) => void;
   onClose: () => void;
 }
@@ -25,6 +28,8 @@ const SUB_LABELS: Record<VehicleCategory, { title: string; badge: string }> = {
 
 export const VehicleMobilityModal: React.FC<VehicleMobilityModalProps> = ({
   vehicleServices,
+  appliedPromotion = null,
+  onClearPromotion,
   onSelectVehicleService,
   onClose,
 }) => {
@@ -32,6 +37,7 @@ export const VehicleMobilityModal: React.FC<VehicleMobilityModalProps> = ({
   const orderedServices = orderedTypes
     .map((vt) => vehicleServices.find((s) => s.vehicleType === vt))
     .filter((s): s is ServiceItem => Boolean(s));
+  const parsedPromo = appliedPromotion ? parsePromotionDiscount(appliedPromotion) : null;
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/65 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
@@ -56,6 +62,26 @@ export const VehicleMobilityModal: React.FC<VehicleMobilityModalProps> = ({
             Choisissez précisément le type de véhicule à nettoyer à Libreville pour accéder au configurateur dédié.
           </p>
         </div>
+
+        {appliedPromotion && parsedPromo && (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 text-xs text-emerald-950">
+              <Tag className="w-4 h-4 text-emerald-700 shrink-0" />
+              <span>
+                Offre active : <strong>{parsedPromo.shortLabel}</strong> — {appliedPromotion.title} (appliquée automatiquement après sélection).
+              </span>
+            </div>
+            {onClearPromotion && (
+              <button
+                type="button"
+                onClick={onClearPromotion}
+                className="text-[11px] font-semibold text-rose-700 hover:text-rose-800 underline"
+              >
+                Retirer l&apos;offre
+              </button>
+            )}
+          </div>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {orderedServices.map((srv) => {

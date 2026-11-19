@@ -63,6 +63,11 @@
         "clientGpsActive": { "type": "boolean" },
         "gpsActive": { "type": "boolean" },
         "clientOfferPrice": { "type": "number" },
+        "originalPrice": { "type": "number" },
+        "discountAmount": { "type": "number" },
+        "appliedPromotionId": { "type": "string", "maxLength": 64 },
+        "appliedPromotionTitle": { "type": "string", "maxLength": 140 },
+        "appliedPromotionDiscount": { "type": "string", "maxLength": 40 },
         "managerCounterPrice": { "type": "number" },
         "finalPrice": { "type": "number" },
         "status": {
