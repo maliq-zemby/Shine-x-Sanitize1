@@ -1,12 +1,12 @@
 {
   "projectId": "shinexsanitize2",
-  "appId": "",
-  "apiKey": "AIzaSyCB4t-bhTiOpd-1vpfJ0uYOiMfAyLGFSxc",
+  "appId": "1:710885153983:web:1a68b273869b1f18127a0a",
+  "apiKey": "AIzaSyCB4t-bhTiOpd-1vpfJ0uYOiMfAyLGfSxc",
   "authDomain": "shinexsanitize2.firebaseapp.com",
   "firestoreDatabaseId": "(default)",
   "storageBucket": "shinexsanitize2.firebasestorage.app",
-  "messagingSenderId": "",
-  "measurementId": "",
+  "messagingSenderId": "710885153983",
+  "measurementId": "G-C22H4T9GVY",
   "oAuthClientId": "",
   "recaptchaSiteKey": ""
 }
