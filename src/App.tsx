@@ -5,6 +5,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  getRedirectResult,
   onAuthStateChanged,
   signOut,
   User as FirebaseUser,
@@ -75,6 +76,7 @@ import {
   auth,
   authPersistenceReady,
   db,
+  formatClassicAuthError,
   handleFirestoreError,
   OperationType,
 } from './firebase';
@@ -82,6 +84,7 @@ import {
   AccountStatus,
   ActiveTabId,
   AppNotification,
+  AssignedAgentInfo,
   Booking,
   GpsPoint,
   NotificationType,
@@ -92,9 +95,9 @@ import {
 } from './types';
 import {
   clearCachedProfileForUid,
-  getCachedProfileForUid,
   getPushPermissionState,
   getReadNotificationIds,
+  playAssignmentAlertChime,
   PushPermissionState,
   requestPushPermission,
   saveReadNotificationIds,
@@ -168,8 +171,15 @@ export default function App() {
 
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [verifiedRoleUid, setVerifiedRoleUid] = useState<string | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authRedirectError, setAuthRedirectError] = useState('');
+  const [pendingGoogleUser, setPendingGoogleUser] = useState<FirebaseUser | null>(null);
+  const [pendingPartialProfile, setPendingPartialProfile] = useState<Partial<UserProfile> | null>(
+    null
+  );
+  const completingOnboardingUidRef = useRef<string | null>(null);
 
   const [previewRole, setPreviewRole] = useState<Role>('client');
   const [activeTab, setActiveTab] = useState<ActiveTab>('home');
@@ -235,12 +245,16 @@ export default function App() {
     type: NotificationType;
     title: string;
     body: string;
+    message?: string;
     targetRoles: Role[];
     targetAgentNames?: string[];
     targetOwnerUid?: string;
+    recipientId?: string;
+    orderId?: string;
     relatedId: string;
     relatedTab: ActiveTab;
     actorUid?: string;
+    read?: boolean;
   }) => {
     const uid = params.actorUid || auth.currentUser?.uid;
     if (!uid) return;
@@ -250,14 +264,18 @@ export default function App() {
       type: params.type,
       title: params.title.slice(0, 140),
       body: params.body.slice(0, 400),
+      ...(params.message ? { message: params.message.slice(0, 400) } : {}),
       targetRoles: params.targetRoles,
       ...(params.targetAgentNames && params.targetAgentNames.length > 0
         ? { targetAgentNames: params.targetAgentNames.slice(0, 10) }
         : {}),
       ...(params.targetOwnerUid ? { targetOwnerUid: params.targetOwnerUid } : {}),
+      ...(params.recipientId ? { recipientId: params.recipientId } : {}),
+      ...(params.orderId ? { orderId: params.orderId } : {}),
       relatedId: params.relatedId,
       relatedTab: params.relatedTab,
       actorUid: uid,
+      ...(typeof params.read === 'boolean' ? { read: params.read } : {}),
       createdAt: new Date().toISOString(),
     };
 
@@ -282,44 +300,60 @@ export default function App() {
   };
 
   const syncSignedInUserProfile = async (fbUser: FirebaseUser) => {
+    await fbUser.getIdToken();
     const userRef = doc(db, 'users', fbUser.uid);
     const isMasterAdmin = Boolean(
       fbUser.email && ADMIN_BOOTSTRAP_EMAILS.has(fbUser.email.toLowerCase())
     );
+    const isGoogleProvider = fbUser.providerData.some((p) => p.providerId === 'google.com');
 
-    let snap;
-    try {
-      snap = await getDoc(userRef);
-    } catch (err) {
-      const cached = getCachedProfileForUid(fbUser.uid);
-      if (cached) {
-        applyResolvedProfile(cached);
-        return;
-      }
-      throw err;
-    }
+    const snap = await getDoc(userRef);
 
     if (snap.exists()) {
-      const existingProfile = snap.data() as UserProfile;
+      const existingProfile = snap.data() as Partial<UserProfile>;
+      const hasDefinedRole = Boolean(
+        existingProfile.role &&
+          ['client', 'agent', 'manager', 'admin'].includes(existingProfile.role)
+      );
+      const hasDefinedStatus = Boolean(existingProfile.accountStatus || existingProfile.status);
+
+      if (!hasDefinedRole || !hasDefinedStatus) {
+        if (completingOnboardingUidRef.current !== fbUser.uid) {
+          setPendingGoogleUser(fbUser);
+          setPendingPartialProfile(existingProfile);
+          setShowAuthModal(true);
+        }
+        setVerifiedRoleUid(null);
+        return;
+      }
+
+      setPendingGoogleUser(null);
+      setPendingPartialProfile(null);
+
       if (
         isMasterAdmin &&
         (existingProfile.role !== 'admin' || existingProfile.accountStatus !== 'active')
       ) {
         const now = new Date().toISOString();
         const upgraded: UserProfile = {
-          ...existingProfile,
+          ...(existingProfile as UserProfile),
           displayName: existingProfile.displayName || ADMIN_DISPLAY_NAME,
           firstName: existingProfile.firstName || ADMIN_FIRST_NAME,
           lastName: existingProfile.lastName || ADMIN_LAST_NAME,
           role: 'admin',
+          status: 'approved',
           accountStatus: 'active',
+          rejectionReason: '',
           phone: existingProfile.phone || ADMIN_WHATSAPP_PHONE,
           updatedAt: now,
         };
         await setDoc(userRef, upgraded);
         applyResolvedProfile(upgraded);
+        setVerifiedRoleUid(fbUser.uid);
       } else {
-        applyResolvedProfile(existingProfile);
+        // Utilisateur existant avec rôle et statut déjà définis : connexion directe sans écrasement
+        applyResolvedProfile(existingProfile as UserProfile);
+        setVerifiedRoleUid(fbUser.uid);
       }
     } else if (isMasterAdmin) {
       const now = new Date().toISOString();
@@ -330,7 +364,9 @@ export default function App() {
         firstName: ADMIN_FIRST_NAME,
         lastName: ADMIN_LAST_NAME,
         role: 'admin',
+        status: 'approved',
         accountStatus: 'active',
+        rejectionReason: '',
         phone: ADMIN_WHATSAPP_PHONE,
         commune: 'Amissa Chantal, Akanda',
         acceptedTerms: true,
@@ -339,7 +375,17 @@ export default function App() {
         updatedAt: now,
       };
       await setDoc(userRef, adminProfile);
+      setPendingGoogleUser(null);
+      setPendingPartialProfile(null);
       applyResolvedProfile(adminProfile);
+      setVerifiedRoleUid(fbUser.uid);
+    } else {
+      setVerifiedRoleUid(null);
+      if (isGoogleProvider && completingOnboardingUidRef.current !== fbUser.uid) {
+        setPendingGoogleUser(fbUser);
+        setPendingPartialProfile(null);
+        setShowAuthModal(true);
+      }
     }
   };
 
@@ -348,34 +394,47 @@ export default function App() {
     let unsub: (() => void) | undefined;
     let cancelled = false;
 
-    authPersistenceReady.finally(() => {
-      if (cancelled) return;
-      unsub = onAuthStateChanged(auth, async (fbUser) => {
-        setFirebaseUser(fbUser);
-        setBookings([]);
-        setUsers([]);
-        setNotifications([]);
-        seenNotifIdsRef.current = new Set();
-        notifSnapshotReadyRef.current = false;
+    authPersistenceReady
+      .then(() =>
+        getRedirectResult(auth).catch((err) => {
+          setAuthRedirectError(formatClassicAuthError(err, 'google'));
+          setShowAuthModal(true);
+          return null;
+        })
+      )
+      .finally(() => {
+        if (cancelled) return;
+        unsub = onAuthStateChanged(auth, async (fbUser) => {
+          setVerifiedRoleUid(null);
+          setFirebaseUser(fbUser);
+          setBookings([]);
+          setUsers([]);
+          setNotifications([]);
+          seenNotifIdsRef.current = new Set();
+          notifSnapshotReadyRef.current = false;
 
-        if (!fbUser) {
-          hasAutoRoutedRef.current = false;
-          setUserProfile(null);
-          setReadNotificationIds([]);
-          setPreviewRole('client');
-          setAuthReady(true);
-          return;
-        }
+          if (!fbUser) {
+            hasAutoRoutedRef.current = false;
+            completingOnboardingUidRef.current = null;
+            setPendingGoogleUser(null);
+            setPendingPartialProfile(null);
+            setUserProfile(null);
+            setReadNotificationIds([]);
+            setPreviewRole('client');
+            setAuthReady(true);
+            return;
+          }
 
-        try {
-          await syncSignedInUserProfile(fbUser);
-        } catch (err) {
-          console.error('Auth profile check error:', err);
-        } finally {
-          setAuthReady(true);
-        }
+          try {
+            await syncSignedInUserProfile(fbUser);
+          } catch (err) {
+            console.error('Auth profile check error:', err);
+            setVerifiedRoleUid(null);
+          } finally {
+            setAuthReady(true);
+          }
+        });
       });
-    });
 
     return () => {
       cancelled = true;
@@ -385,16 +444,30 @@ export default function App() {
 
   // Dès que la connexion Internet est rétablie, s'assure que le profil authentifié est synchronisé
   useEffect(() => {
-    if (networkStatus === 'online' && authReady && firebaseUser && !userProfile) {
+    if (
+      networkStatus === 'online' &&
+      authReady &&
+      firebaseUser &&
+      (!userProfile || verifiedRoleUid !== firebaseUser.uid)
+    ) {
       syncSignedInUserProfile(firebaseUser).catch(() => {});
     }
-  }, [networkStatus, authReady, firebaseUser, userProfile]);
+  }, [networkStatus, authReady, firebaseUser, userProfile, verifiedRoleUid]);
 
   // Live listener on the signed-in company's own /users document while it is awaiting
   // validation (or rejected), so an admin decision unlocks / updates the screen instantly.
   const ownProfileUid = userProfile?.uid;
   useEffect(() => {
-    if (!authReady || !firebaseUser || !ownProfileUid || !isCompanyBlocked) return;
+    if (
+      networkStatus !== 'online' ||
+      !authReady ||
+      !firebaseUser ||
+      !ownProfileUid ||
+      verifiedRoleUid !== firebaseUser.uid ||
+      !isCompanyBlocked
+    ) {
+      return;
+    }
 
     const unsub = onSnapshot(
       doc(db, 'users', firebaseUser.uid),
@@ -413,7 +486,7 @@ export default function App() {
     );
 
     return () => unsub();
-  }, [authReady, firebaseUser, ownProfileUid, isCompanyBlocked]);
+  }, [networkStatus, authReady, firebaseUser, ownProfileUid, verifiedRoleUid, isCompanyBlocked]);
 
   // Real-time Firestore listener for /services (prices updated by manager reflect immediately)
   useEffect(() => {
@@ -467,30 +540,104 @@ export default function App() {
     return () => unsub();
   }, [userProfile]);
 
-  // Real-time Firestore listener for /bookings with strict client isolation
+  // Real-time Firestore listener for /bookings with strict role & auth-verification guard
   useEffect(() => {
-    if (!authReady || !firebaseUser || !userProfile || isCompanyAccessBlocked(userProfile)) {
+    if (
+      networkStatus !== 'online' ||
+      !authReady ||
+      !firebaseUser ||
+      !userProfile ||
+      verifiedRoleUid !== firebaseUser.uid ||
+      isCompanyAccessBlocked(userProfile)
+    ) {
       setBookings([]);
       return;
     }
 
     const bookingsRef = collection(db, 'bookings');
-    const q =
-      userProfile.role === 'client'
-        ? query(bookingsRef, where('ownerUid', '==', firebaseUser.uid))
-        : bookingsRef;
+
+    if (userProfile.role === 'client') {
+      const byOwner = new Map<string, Booking>();
+      const byUserId = new Map<string, Booking>();
+      const syncMergedClientBookings = () => {
+        const merged = new Map<string, Booking>();
+        byOwner.forEach((b, id) => merged.set(id, b));
+        byUserId.forEach((b, id) => merged.set(id, b));
+        const list = Array.from(merged.values())
+          .filter((b) => b.ownerUid === firebaseUser.uid || b.userId === firebaseUser.uid)
+          .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+        setBookings(list);
+      };
+
+      const unsubOwner = onSnapshot(
+        query(bookingsRef, where('ownerUid', '==', firebaseUser.uid)),
+        (snapshot) => {
+          byOwner.clear();
+          snapshot.docs.forEach((d) => {
+            const data = d.data() as Booking;
+            byOwner.set(data.id || d.id, data);
+          });
+          syncMergedClientBookings();
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.LIST, 'bookings');
+        }
+      );
+
+      const unsubUserId = onSnapshot(
+        query(bookingsRef, where('userId', '==', firebaseUser.uid)),
+        (snapshot) => {
+          byUserId.clear();
+          snapshot.docs.forEach((d) => {
+            const data = d.data() as Booking;
+            byUserId.set(data.id || d.id, data);
+          });
+          syncMergedClientBookings();
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.LIST, 'bookings');
+        }
+      );
+
+      return () => {
+        unsubOwner();
+        unsubUserId();
+      };
+    }
+
+    if (userProfile.role === 'agent') {
+      const VALIDATED_AGENT_STATUSES = new Set([
+        'confirmed',
+        'in_transit',
+        'in_progress',
+        'completed',
+      ]);
+      const unsubAgent = onSnapshot(
+        query(bookingsRef, where('assignedAgentIds', 'array-contains', firebaseUser.uid)),
+        (snapshot) => {
+          const remoteBookings = snapshot.docs
+            .map((d) => d.data() as Booking)
+            .filter((b) => VALIDATED_AGENT_STATUSES.has(b.status))
+            .sort((a, b) =>
+              (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || '')
+            );
+          setBookings(remoteBookings);
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.LIST, 'bookings');
+        }
+      );
+
+      return () => unsubAgent();
+    }
 
     const unsub = onSnapshot(
-      q,
+      bookingsRef,
       (snapshot) => {
         const remoteBookings = snapshot.docs
           .map((d) => d.data() as Booking)
           .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
-        if (userProfile.role === 'client') {
-          setBookings(remoteBookings.filter((b) => b.ownerUid === firebaseUser.uid));
-        } else {
-          setBookings(remoteBookings);
-        }
+        setBookings(remoteBookings);
       },
       (error) => {
         handleFirestoreError(error, OperationType.LIST, 'bookings');
@@ -498,37 +645,289 @@ export default function App() {
     );
 
     return () => unsub();
-  }, [authReady, firebaseUser, userProfile]);
+  }, [networkStatus, authReady, firebaseUser, userProfile, verifiedRoleUid]);
 
-  // Real-time Firestore listener for /users when signed in as Admin
+  // Real-time Firestore listener for /users (all users for Admin; active agents for approved Manager)
   useEffect(() => {
-    if (!authReady || !firebaseUser || userProfile?.role !== 'admin') {
+    if (
+      networkStatus !== 'online' ||
+      !authReady ||
+      !firebaseUser ||
+      !userProfile ||
+      verifiedRoleUid !== firebaseUser.uid ||
+      isCompanyAccessBlocked(userProfile)
+    ) {
       setUsers([]);
       return;
     }
 
-    const unsub = onSnapshot(
-      collection(db, 'users'),
-      (snapshot) => {
-        const remoteUsers = snapshot.docs.map((d) => d.data() as UserProfile);
-        setUsers(remoteUsers);
-      },
-      (error) => {
-        handleFirestoreError(error, OperationType.LIST, 'users');
-      }
-    );
+    if (userProfile.role === 'admin') {
+      const unsub = onSnapshot(
+        collection(db, 'users'),
+        (snapshot) => {
+          const remoteUsers = snapshot.docs.map((d) => d.data() as UserProfile);
+          setUsers(remoteUsers);
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.LIST, 'users');
+        }
+      );
 
-    return () => unsub();
-  }, [authReady, firebaseUser, userProfile]);
+      return () => unsub();
+    }
+
+    if (userProfile.role === 'manager') {
+      const unsubAgents = onSnapshot(
+        query(
+          collection(db, 'users'),
+          where('role', '==', 'agent'),
+          where('accountStatus', '==', 'active')
+        ),
+        (snapshot) => {
+          const activeAgents = snapshot.docs.map((d) => d.data() as UserProfile);
+          setUsers(activeAgents);
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.LIST, 'users');
+        }
+      );
+
+      return () => unsubAgents();
+    }
+
+    setUsers([]);
+  }, [networkStatus, authReady, firebaseUser, userProfile, verifiedRoleUid]);
 
   // Real-time Firestore listener for targeted push notifications (/notifications)
   useEffect(() => {
-    if (!authReady || !firebaseUser || !userProfile || isCompanyAccessBlocked(userProfile)) {
+    if (
+      networkStatus !== 'online' ||
+      !authReady ||
+      !firebaseUser ||
+      !userProfile ||
+      verifiedRoleUid !== firebaseUser.uid ||
+      isCompanyAccessBlocked(userProfile)
+    ) {
       setNotifications([]);
       return;
     }
 
     const notifRef = collection(db, 'notifications');
+
+    const matchesUser = (n: AppNotification) => {
+      if (!isNotificationFresh(n.createdAt)) return false;
+      if (userProfile.role !== 'admin') {
+        if (n.recipientId && n.recipientId !== firebaseUser.uid) {
+          return false;
+        }
+        if (n.targetOwnerUid && n.targetOwnerUid !== firebaseUser.uid) {
+          return false;
+        }
+      }
+      if (
+        userProfile.role === 'agent' &&
+        !n.recipientId &&
+        n.targetAgentNames &&
+        n.targetAgentNames.length > 0
+      ) {
+        return n.targetAgentNames.includes(userProfile.displayName);
+      }
+      return true;
+    };
+
+    const pruneInterval = setInterval(() => {
+      setNotifications((prev) => prev.filter((n) => isNotificationFresh(n.createdAt)));
+    }, 60000);
+
+    if (userProfile.role === 'agent') {
+      const byRecipient = new Map<string, AppNotification>();
+      const byPromo = new Map<string, AppNotification>();
+      let recipientReady = false;
+      let promoReady = false;
+
+      const syncAgentNotifications = () => {
+        const merged = new Map<string, AppNotification>();
+        byPromo.forEach((n, id) => merged.set(id, n));
+        byRecipient.forEach((n, id) => merged.set(id, n));
+        const relevant = Array.from(merged.values())
+          .filter(matchesUser)
+          .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+        setNotifications(relevant);
+      };
+
+      const processAgentChanges = (
+        snapshotDocs: AppNotification[],
+        changes: Array<{ type: string; doc: { data: () => unknown } }>,
+        isReady: boolean,
+        markReady: () => void
+      ) => {
+        if (!isReady) {
+          snapshotDocs.filter(matchesUser).forEach((n) => seenNotifIdsRef.current.add(n.id));
+          markReady();
+          return;
+        }
+        changes.forEach((change) => {
+          if (change.type === 'added') {
+            const added = change.doc.data() as AppNotification;
+            if (!seenNotifIdsRef.current.has(added.id) && matchesUser(added)) {
+              seenNotifIdsRef.current.add(added.id);
+              if (
+                added.read !== true &&
+                (added.actorUid !== firebaseUser.uid || added.type === 'promo_approved')
+              ) {
+                setLiveToast(added);
+                showBrowserPushNotification(added);
+                if (added.type === 'agent_assigned') {
+                  playAssignmentAlertChime();
+                }
+              }
+            }
+          }
+        });
+      };
+
+      const unsubRecipient = onSnapshot(
+        query(notifRef, where('recipientId', '==', firebaseUser.uid)),
+        (snapshot) => {
+          byRecipient.clear();
+          const docs = snapshot.docs.map((d) => d.data() as AppNotification);
+          docs.forEach((n) => byRecipient.set(n.id, n));
+          syncAgentNotifications();
+          processAgentChanges(docs, snapshot.docChanges(), recipientReady, () => {
+            recipientReady = true;
+          });
+        },
+        (error) => {
+          console.warn('Agent recipient notifications notice:', error.message);
+        }
+      );
+
+      const unsubPromo = onSnapshot(
+        query(notifRef, where('type', '==', 'promo_approved')),
+        (snapshot) => {
+          byPromo.clear();
+          const docs = snapshot.docs.map((d) => d.data() as AppNotification);
+          docs.forEach((n) => byPromo.set(n.id, n));
+          syncAgentNotifications();
+          processAgentChanges(docs, snapshot.docChanges(), promoReady, () => {
+            promoReady = true;
+          });
+        },
+        (error) => {
+          console.warn('Agent promo notifications notice:', error.message);
+        }
+      );
+
+      return () => {
+        unsubRecipient();
+        unsubPromo();
+        clearInterval(pruneInterval);
+      };
+    }
+
+    if (userProfile.role === 'client') {
+      const byRecipient = new Map<string, AppNotification>();
+      const byOwner = new Map<string, AppNotification>();
+      const byPromo = new Map<string, AppNotification>();
+      let recipientReady = false;
+      let ownerReady = false;
+      let promoReady = false;
+
+      const syncClientNotifications = () => {
+        const merged = new Map<string, AppNotification>();
+        byPromo.forEach((n, id) => merged.set(id, n));
+        byOwner.forEach((n, id) => merged.set(id, n));
+        byRecipient.forEach((n, id) => merged.set(id, n));
+        const relevant = Array.from(merged.values())
+          .filter(matchesUser)
+          .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+        setNotifications(relevant);
+      };
+
+      const processClientChanges = (
+        snapshotDocs: AppNotification[],
+        changes: Array<{ type: string; doc: { data: () => unknown } }>,
+        isReady: boolean,
+        markReady: () => void
+      ) => {
+        if (!isReady) {
+          snapshotDocs.filter(matchesUser).forEach((n) => seenNotifIdsRef.current.add(n.id));
+          markReady();
+          return;
+        }
+        changes.forEach((change) => {
+          if (change.type === 'added') {
+            const added = change.doc.data() as AppNotification;
+            if (!seenNotifIdsRef.current.has(added.id) && matchesUser(added)) {
+              seenNotifIdsRef.current.add(added.id);
+              if (
+                added.read !== true &&
+                (added.actorUid !== firebaseUser.uid || added.type === 'promo_approved')
+              ) {
+                setLiveToast(added);
+                showBrowserPushNotification(added);
+              }
+            }
+          }
+        });
+      };
+
+      const unsubRecipient = onSnapshot(
+        query(notifRef, where('recipientId', '==', firebaseUser.uid)),
+        (snapshot) => {
+          byRecipient.clear();
+          const docs = snapshot.docs.map((d) => d.data() as AppNotification);
+          docs.forEach((n) => byRecipient.set(n.id, n));
+          syncClientNotifications();
+          processClientChanges(docs, snapshot.docChanges(), recipientReady, () => {
+            recipientReady = true;
+          });
+        },
+        (error) => {
+          console.warn('Client recipient notifications notice:', error.message);
+        }
+      );
+
+      const unsubOwner = onSnapshot(
+        query(notifRef, where('targetOwnerUid', '==', firebaseUser.uid)),
+        (snapshot) => {
+          byOwner.clear();
+          const docs = snapshot.docs.map((d) => d.data() as AppNotification);
+          docs.forEach((n) => byOwner.set(n.id, n));
+          syncClientNotifications();
+          processClientChanges(docs, snapshot.docChanges(), ownerReady, () => {
+            ownerReady = true;
+          });
+        },
+        (error) => {
+          console.warn('Client targetOwnerUid notifications notice:', error.message);
+        }
+      );
+
+      const unsubPromo = onSnapshot(
+        query(notifRef, where('type', '==', 'promo_approved')),
+        (snapshot) => {
+          byPromo.clear();
+          const docs = snapshot.docs.map((d) => d.data() as AppNotification);
+          docs.forEach((n) => byPromo.set(n.id, n));
+          syncClientNotifications();
+          processClientChanges(docs, snapshot.docChanges(), promoReady, () => {
+            promoReady = true;
+          });
+        },
+        (error) => {
+          console.warn('Client promo notifications notice:', error.message);
+        }
+      );
+
+      return () => {
+        unsubRecipient();
+        unsubOwner();
+        unsubPromo();
+        clearInterval(pruneInterval);
+      };
+    }
+
     const q =
       userProfile.role === 'admin'
         ? notifRef
@@ -549,17 +948,6 @@ export default function App() {
             }
           });
         }
-
-        const matchesUser = (n: AppNotification) => {
-          if (!isNotificationFresh(n.createdAt)) return false;
-          if (n.targetOwnerUid && userProfile.role !== 'admin' && n.targetOwnerUid !== firebaseUser.uid) {
-            return false;
-          }
-          if (userProfile.role === 'agent' && n.targetAgentNames && n.targetAgentNames.length > 0) {
-            return n.targetAgentNames.includes(userProfile.displayName);
-          }
-          return true;
-        };
 
         const relevant = allItems.filter(matchesUser);
         setNotifications(relevant);
@@ -591,15 +979,11 @@ export default function App() {
       }
     );
 
-    const pruneInterval = setInterval(() => {
-      setNotifications((prev) => prev.filter((n) => isNotificationFresh(n.createdAt)));
-    }, 60000);
-
     return () => {
       unsub();
       clearInterval(pruneInterval);
     };
-  }, [authReady, firebaseUser, userProfile]);
+  }, [networkStatus, authReady, firebaseUser, userProfile, verifiedRoleUid]);
 
   useEffect(() => {
     if (!liveToast) return;
@@ -631,6 +1015,19 @@ export default function App() {
       saveReadNotificationIds(userProfile.uid, next);
       return next;
     });
+    setNotifications((prev) =>
+      prev.map((n) => (n.id === notifId ? { ...n, read: true } : n))
+    );
+
+    const target = notifications.find((n) => n.id === notifId);
+    if (
+      firebaseUser &&
+      target &&
+      target.read !== true &&
+      (target.recipientId === firebaseUser.uid || target.targetOwnerUid === firebaseUser.uid)
+    ) {
+      updateDoc(doc(db, 'notifications', notifId), { read: true }).catch(() => {});
+    }
   };
 
   const handleMarkAllNotificationsRead = () => {
@@ -640,6 +1037,18 @@ export default function App() {
     );
     setReadNotificationIds(allIds);
     saveReadNotificationIds(userProfile.uid, allIds);
+    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+
+    if (firebaseUser) {
+      notifications.forEach((n) => {
+        if (
+          n.read !== true &&
+          (n.recipientId === firebaseUser.uid || n.targetOwnerUid === firebaseUser.uid)
+        ) {
+          updateDoc(doc(db, 'notifications', n.id), { read: true }).catch(() => {});
+        }
+      });
+    }
   };
 
   // Simulated GPS movement only when real hardware GPS has not locked an accuracy reading
@@ -662,52 +1071,82 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // Complete registration & Firestore persistence after classic Auth
-  const handleCompleteOnboarding = async (profile: UserProfile) => {
-    hasAutoRoutedRef.current = true;
-    setUserProfile(profile);
-    setCachedProfileForUid(profile);
-    setPreviewRole(profile.role);
-    setShowAuthModal(false);
-    setReadNotificationIds(getReadNotificationIds(profile.uid));
-
+  // Complete registration & Firestore persistence after classic or Google Auth
+  const handleCompleteOnboarding = async (rawProfile: UserProfile) => {
     const activeAuthUser = firebaseUser || auth.currentUser;
     if (activeAuthUser) {
+      completingOnboardingUidRef.current = activeAuthUser.uid;
       try {
-        await setDoc(doc(db, 'users', profile.uid), profile);
+        await activeAuthUser.getIdToken();
+
+        const isMasterAdmin = Boolean(
+          activeAuthUser.email && ADMIN_BOOTSTRAP_EMAILS.has(activeAuthUser.email.toLowerCase())
+        );
+
+        // Sécurité : empêche toute auto-attribution du rôle admin ou d'un statut approuvé côté client
+        const allowedSelfRole: Role =
+          isMasterAdmin && rawProfile.role === 'admin'
+            ? 'admin'
+            : rawProfile.role === 'manager' || rawProfile.role === 'agent'
+            ? rawProfile.role
+            : 'client';
+
+        const isManager = allowedSelfRole === 'manager';
+        const safeProfile: UserProfile = {
+          ...rawProfile,
+          uid: activeAuthUser.uid,
+          role: allowedSelfRole,
+          status: isManager ? 'pending' : 'approved',
+          accountStatus: isManager ? 'pending' : 'active',
+          rejectionReason: '',
+        };
+
+        await setDoc(doc(db, 'users', safeProfile.uid), safeProfile);
+
+        hasAutoRoutedRef.current = true;
+        setPendingGoogleUser(null);
+        setPendingPartialProfile(null);
+        setUserProfile(safeProfile);
+        setCachedProfileForUid(safeProfile);
+        setPreviewRole(safeProfile.role);
+        setShowAuthModal(false);
+        setReadNotificationIds(getReadNotificationIds(safeProfile.uid));
+        setVerifiedRoleUid(safeProfile.uid);
 
         const roleLabel =
-          profile.role === 'manager'
+          safeProfile.role === 'manager'
             ? 'Entreprise / Gérant'
-            : profile.role === 'agent'
+            : safeProfile.role === 'agent'
             ? 'Agent technicien'
-            : profile.role === 'admin'
+            : safeProfile.role === 'admin'
             ? 'Administrateur'
             : 'Client';
 
-        if (profile.role !== 'admin') {
+        if (safeProfile.role !== 'admin') {
           await publishNotification({
             type: 'new_registration',
             title:
-              profile.role === 'manager'
+              safeProfile.role === 'manager'
                 ? 'Nouvelle inscription Entreprise à valider'
                 : `Nouvelle inscription (${roleLabel})`,
-            body: profile.companyName
-              ? `${profile.companyName} (${profile.displayName}) à ${profile.commune || 'Libreville'} attend validation.`
-              : `${profile.displayName} (${roleLabel}) vient de s'inscrire à ${profile.commune || 'Libreville'}.`,
+            body: safeProfile.companyName
+              ? `${safeProfile.companyName} (${safeProfile.displayName}) à ${safeProfile.commune || 'Libreville'} attend validation.`
+              : `${safeProfile.displayName} (${roleLabel}) vient de s'inscrire à ${safeProfile.commune || 'Libreville'}.`,
             targetRoles: ['manager', 'admin'],
-            relatedId: profile.uid,
+            relatedId: safeProfile.uid,
             relatedTab: 'admin',
-            actorUid: profile.uid,
+            actorUid: safeProfile.uid,
           });
         }
 
         if (pendingBooking) {
           const scopedBooking: Booking = {
             ...pendingBooking,
-            ownerUid: profile.uid,
-            clientName: pendingBooking.clientName || profile.displayName,
-            clientPhone: pendingBooking.clientPhone || profile.phone,
+            ownerUid: safeProfile.uid,
+            userId: safeProfile.uid,
+            assignedAgentIds: pendingBooking.assignedAgentIds || [],
+            clientName: pendingBooking.clientName || safeProfile.displayName,
+            clientPhone: pendingBooking.clientPhone || safeProfile.phone,
           };
           setPendingBooking(null);
           setBookings((prev) => [scopedBooking, ...prev]);
@@ -726,13 +1165,15 @@ export default function App() {
               : {}),
             relatedId: scopedBooking.id,
             relatedTab: 'suivi_commande',
-            actorUid: profile.uid,
+            actorUid: safeProfile.uid,
           });
         } else {
-          setActiveTab(getDashboardTabForRole(profile.role));
+          setActiveTab(getDashboardTabForRole(safeProfile.role));
         }
       } catch (error) {
-        handleFirestoreError(error, OperationType.CREATE, `users/${profile.uid}`);
+        handleFirestoreError(error, OperationType.CREATE, `users/${rawProfile.uid}`);
+      } finally {
+        completingOnboardingUidRef.current = null;
       }
     }
   };
@@ -742,6 +1183,10 @@ export default function App() {
       clearCachedProfileForUid(firebaseUser.uid);
     }
     hasAutoRoutedRef.current = false;
+    completingOnboardingUidRef.current = null;
+    setVerifiedRoleUid(null);
+    setPendingGoogleUser(null);
+    setPendingPartialProfile(null);
     await signOut(auth);
     setUserProfile(null);
     setBookings([]);
@@ -766,6 +1211,8 @@ export default function App() {
     const scopedBooking: Booking = {
       ...newBooking,
       ownerUid: firebaseUser.uid,
+      userId: firebaseUser.uid,
+      assignedAgentIds: newBooking.assignedAgentIds || [],
     };
 
     setBookings((prev) => [scopedBooking, ...prev]);
@@ -842,50 +1289,202 @@ export default function App() {
     });
   };
 
-  // Manager / Admin Actions
-  const handleValidateOrder = (bookingId: string) => {
-    const target = bookings.find((b) => b.id === bookingId);
+  // Helpers de résolution des agents sélectionnés & envoi d'alertes dédiées
+  const resolveSelectedAgentsData = (
+    bookingId: string,
+    target: Booking | undefined,
+    selectedAgentIds?: string[],
+    selectedAgentNames?: string[]
+  ) => {
+    const activeAgentsList = users.filter(
+      (u) => u.role === 'agent' && u.accountStatus === 'active'
+    );
     const busyAgentNames = new Set(
       bookings
         .filter((b) => b.id !== bookingId && (b.status === 'in_transit' || b.status === 'in_progress'))
         .flatMap((b) => b.assignedAgents)
     );
-    const firstAvailableAgent = users.find(
-      (u) => u.role === 'agent' && u.accountStatus === 'active' && !busyAgentNames.has(u.displayName)
-    )?.displayName;
-    const assigned =
-      target && target.assignedAgents.length > 0
-        ? target.assignedAgents
-        : firstAvailableAgent
-        ? [firstAvailableAgent]
-        : [];
+    const busyAgentIds = new Set(
+      bookings
+        .filter((b) => b.id !== bookingId && (b.status === 'in_transit' || b.status === 'in_progress'))
+        .flatMap((b) => b.assignedAgentIds || [])
+    );
 
-    persistBookingPatch(bookingId, {
-      status: 'confirmed',
-      assignedAgents: assigned,
+    const candidateIds =
+      selectedAgentIds && selectedAgentIds.length > 0
+        ? selectedAgentIds
+        : target?.assignedAgentIds || [];
+    const candidateNames =
+      selectedAgentNames && selectedAgentNames.length > 0
+        ? selectedAgentNames
+        : target?.assignedAgents || [];
+
+    const matchedUsers: UserProfile[] = [];
+    const seenUids = new Set<string>();
+
+    candidateIds.forEach((uid) => {
+      const found = activeAgentsList.find((u) => u.uid === uid);
+      if (found && !seenUids.has(found.uid)) {
+        seenUids.add(found.uid);
+        matchedUsers.push(found);
+      }
     });
 
-    if (assigned.length > 0 && target) {
-      publishNotification({
+    candidateNames.forEach((name) => {
+      const found = activeAgentsList.find((u) => u.displayName === name);
+      if (found && !seenUids.has(found.uid)) {
+        seenUids.add(found.uid);
+        matchedUsers.push(found);
+      }
+    });
+
+    if (matchedUsers.length === 0 && candidateIds.length === 0 && candidateNames.length === 0) {
+      const fallbackAgent = activeAgentsList.find(
+        (u) => !busyAgentIds.has(u.uid) && !busyAgentNames.has(u.displayName)
+      );
+      if (fallbackAgent) {
+        matchedUsers.push(fallbackAgent);
+      }
+    }
+
+    const assignedAgentIds = Array.from(
+      new Set([...candidateIds, ...matchedUsers.map((u) => u.uid)])
+    ).slice(0, 10);
+
+    const assignedAgents = Array.from(
+      new Set([...matchedUsers.map((u) => u.displayName), ...candidateNames])
+    ).slice(0, 10);
+
+    const assignedAgentDetails: AssignedAgentInfo[] = matchedUsers.slice(0, 10).map((u) => ({
+      uid: u.uid,
+      displayName: u.displayName,
+      ...(u.phone ? { phone: u.phone } : {}),
+      ...(u.commune ? { commune: u.commune } : {}),
+    }));
+
+    return {
+      assignedAgentIds,
+      assignedAgents,
+      assignedAgentDetails,
+    };
+  };
+
+  const notifyAssignedAgents = async (
+    bookingId: string,
+    target: Booking,
+    agentIds: string[],
+    agentNames: string[],
+    agentDetails: AssignedAgentInfo[]
+  ) => {
+    const promoNote = target.promoApplied
+      ? ` (Promo ${target.promoApplied.discountLabel || ''} appliquée)`
+      : '';
+    const amountLabel = `${target.finalPrice.toLocaleString()} XAF${promoNote}`;
+    const orderMsg = `Nouvelle commande validée #${bookingId} : ${target.serviceName} pour ${target.clientName} à ${target.commune} (${target.address}) — Montant : ${amountLabel}.`;
+
+    const notifiedUids = new Set<string>();
+    const detailsByUid = new Map(agentDetails.map((d) => [d.uid, d]));
+
+    for (const uid of agentIds) {
+      if (!uid || notifiedUids.has(uid)) continue;
+      notifiedUids.add(uid);
+      const detail = detailsByUid.get(uid);
+      await publishNotification({
         type: 'agent_assigned',
-        title: `Mission confirmée #${bookingId}`,
-        body: `Agent(s) affecté(s) : ${assigned.join(', ')} — ${target.serviceName} (${target.commune}).`,
-        targetRoles: ['agent', 'manager', 'admin'],
-        targetAgentNames: assigned,
+        title: `Nouvelle commande assignée #${bookingId}`,
+        body: orderMsg,
+        message: orderMsg,
+        targetRoles: ['agent'],
+        ...(detail?.displayName ? { targetAgentNames: [detail.displayName] } : {}),
+        recipientId: uid,
+        orderId: bookingId,
         relatedId: bookingId,
         relatedTab: 'agent_space',
+        read: false,
+      });
+    }
+
+    if (notifiedUids.size === 0 && agentNames.length > 0) {
+      await publishNotification({
+        type: 'agent_assigned',
+        title: `Nouvelle commande assignée #${bookingId}`,
+        body: orderMsg,
+        message: orderMsg,
+        targetRoles: ['agent', 'manager', 'admin'],
+        targetAgentNames: agentNames,
+        orderId: bookingId,
+        relatedId: bookingId,
+        relatedTab: 'agent_space',
+        read: false,
       });
     }
   };
 
-  const handleRefuseOrder = (bookingId: string, reason: string) => {
-    persistBookingPatch(bookingId, {
+  // Manager / Admin Actions
+  const handleValidateOrder = async (
+    bookingId: string,
+    selectedAgentIds?: string[],
+    selectedAgentNames?: string[]
+  ) => {
+    const target = bookings.find((b) => b.id === bookingId);
+    const { assignedAgentIds, assignedAgents, assignedAgentDetails } =
+      resolveSelectedAgentsData(bookingId, target, selectedAgentIds, selectedAgentNames);
+
+    await persistBookingPatch(bookingId, {
+      status: 'confirmed',
+      assignedAgents,
+      assignedAgentIds,
+      assignedAgentDetails,
+      ...(target ? { finalPrice: target.finalPrice } : {}),
+    });
+
+    if (target && (assignedAgentIds.length > 0 || assignedAgents.length > 0)) {
+      await notifyAssignedAgents(
+        bookingId,
+        target,
+        assignedAgentIds,
+        assignedAgents,
+        assignedAgentDetails
+      );
+    }
+  };
+
+  const handleRefuseOrder = async (bookingId: string, reason: string) => {
+    const target = bookings.find((b) => b.id === bookingId);
+    const trimmedReason =
+      reason.trim() || 'Votre commande a été refusée par le gérant.';
+    const refusedAt = new Date().toISOString();
+    const clientUid = target?.userId || target?.ownerUid || '';
+
+    await persistBookingPatch(bookingId, {
       status: 'rejected',
       gpsActive: false,
       clientGpsActive: false,
       assignedAgents: [],
-      rejectionReason: reason.trim() || 'Votre commande a été refusée par le gérant.',
+      assignedAgentIds: [],
+      assignedAgentDetails: [],
+      rejectionReason: trimmedReason,
+      refusalReason: trimmedReason,
+      refusedAt,
+      ...(clientUid ? { userId: clientUid } : {}),
     });
+
+    if (clientUid) {
+      const refusalMessage = `Votre commande #${bookingId} (${target?.serviceName || 'Prestation'}) a été refusée. Motif : ${trimmedReason}`;
+      await publishNotification({
+        type: 'order_refused',
+        title: 'Commande refusée',
+        body: refusalMessage,
+        message: refusalMessage,
+        targetRoles: ['client'],
+        targetOwnerUid: clientUid,
+        recipientId: clientUid,
+        orderId: bookingId,
+        relatedId: bookingId,
+        relatedTab: 'mes_reservations',
+        read: false,
+      });
+    }
   };
 
   const handleDeleteOrder = async (bookingId: string) => {
@@ -908,23 +1507,36 @@ export default function App() {
     });
   };
 
-  const handleAssignAgents = (bookingId: string, agents: string[]) => {
+  const handleAssignAgents = async (
+    bookingId: string,
+    agents: string[],
+    agentIds?: string[]
+  ) => {
     const target = bookings.find((b) => b.id === bookingId);
-    persistBookingPatch(bookingId, {
-      assignedAgents: agents,
+    const previousAgentIds = new Set(target?.assignedAgentIds || []);
+    const { assignedAgentIds, assignedAgents, assignedAgentDetails } =
+      resolveSelectedAgentsData(bookingId, undefined, agentIds, agents);
+
+    await persistBookingPatch(bookingId, {
+      assignedAgents,
+      assignedAgentIds,
+      assignedAgentDetails,
       agentGps: target?.agentGps || DEFAULT_GPS_POSITION,
     });
 
-    if (agents.length > 0 && target) {
-      publishNotification({
-        type: 'agent_assigned',
-        title: `Nouvelle affectation #${bookingId}`,
-        body: `${agents.join(', ')} affecté(s) sur ${target.serviceName} à ${target.commune}.`,
-        targetRoles: ['agent', 'manager', 'admin'],
-        targetAgentNames: agents,
-        relatedId: bookingId,
-        relatedTab: 'agent_space',
-      });
+    const isAlreadyValidated = Boolean(
+      target && ['confirmed', 'in_transit', 'in_progress'].includes(target.status)
+    );
+    const newlyAddedIds = assignedAgentIds.filter((uid) => !previousAgentIds.has(uid));
+
+    if (target && isAlreadyValidated && (newlyAddedIds.length > 0 || assignedAgents.length > 0)) {
+      await notifyAssignedAgents(
+        bookingId,
+        target,
+        newlyAddedIds.length > 0 ? newlyAddedIds : assignedAgentIds,
+        assignedAgents,
+        assignedAgentDetails
+      );
     }
   };
 
@@ -1351,15 +1963,37 @@ export default function App() {
 
     if (target) {
       const agentTargetList = target.assignedAgents.length > 0 ? target.assignedAgents : undefined;
-      await publishNotification({
-        type: 'agent_encouragement',
-        title: `Bravo pour la mission #${bookingId} !`,
-        body: `Excellent travail${agentTargetList ? ` ${agentTargetList.join(', ')}` : ''} ! Merci pour votre rigueur sur le terrain (${target.serviceName}), continuez ainsi !`,
-        targetRoles: ['agent'],
-        ...(agentTargetList ? { targetAgentNames: agentTargetList } : {}),
-        relatedId: bookingId,
-        relatedTab: 'agent_space',
-      });
+      const agentTargetIds = (target.assignedAgentIds || []).filter(Boolean);
+      const encouragementMsg = `Excellent travail${agentTargetList ? ` ${agentTargetList.join(', ')}` : ''} ! Merci pour votre rigueur sur le terrain (${target.serviceName}), continuez ainsi !`;
+
+      if (agentTargetIds.length > 0) {
+        for (const uid of agentTargetIds) {
+          await publishNotification({
+            type: 'agent_encouragement',
+            title: `Bravo pour la mission #${bookingId} !`,
+            body: encouragementMsg,
+            message: encouragementMsg,
+            targetRoles: ['agent'],
+            ...(agentTargetList ? { targetAgentNames: agentTargetList } : {}),
+            recipientId: uid,
+            orderId: bookingId,
+            relatedId: bookingId,
+            relatedTab: 'agent_space',
+            read: false,
+          });
+        }
+      } else {
+        await publishNotification({
+          type: 'agent_encouragement',
+          title: `Bravo pour la mission #${bookingId} !`,
+          body: encouragementMsg,
+          message: encouragementMsg,
+          targetRoles: ['agent'],
+          ...(agentTargetList ? { targetAgentNames: agentTargetList } : {}),
+          relatedId: bookingId,
+          relatedTab: 'agent_space',
+        });
+      }
     }
   };
 
@@ -1567,7 +2201,16 @@ export default function App() {
                 title="Se déconnecter"
                 className="px-3 py-2 min-h-[40px] bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-semibold rounded-xl inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
               >
-                <LogOut className="w-3.5 h-3.5" />
+                {userProfile.photoURL ? (
+                  <img
+                    src={userProfile.photoURL}
+                    alt={userProfile.displayName}
+                    className="w-4 h-4 rounded-full object-cover border border-white/40"
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <LogOut className="w-3.5 h-3.5" />
+                )}
                 <span className="hidden sm:inline">{userProfile.displayName.split(' ')[0]}</span>
               </button>
             ) : (
@@ -1577,7 +2220,7 @@ export default function App() {
                 className="px-3.5 py-2 min-h-[40px] bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-xl inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
               >
                 <LogIn className="w-3.5 h-3.5" />
-                <span>Connexion</span>
+                <span>{pendingGoogleUser ? 'Finaliser profil' : 'Connexion'}</span>
               </button>
             )}
           </div>
@@ -2194,14 +2837,25 @@ export default function App() {
           <ClientReservationsView
             bookings={
               firebaseUser && userProfile
-                ? bookings.filter((b) => b.ownerUid === firebaseUser.uid)
+                ? bookings.filter(
+                    (b) => b.ownerUid === firebaseUser.uid || b.userId === firebaseUser.uid
+                  )
                 : []
             }
+            refusalNotifications={notifications.filter(
+              (n) =>
+                n.type === 'order_refused' &&
+                (!firebaseUser ||
+                  n.recipientId === firebaseUser.uid ||
+                  n.targetOwnerUid === firebaseUser.uid)
+            )}
+            readNotificationIds={readNotificationIds}
             isAuthenticated={Boolean(firebaseUser && userProfile)}
             onOpenAuth={() => setShowAuthModal(true)}
             onAcceptCounterOffer={handleAcceptCounterOffer}
             onSubmitReview={handleSubmitReview}
             onToggleClientGps={handleToggleClientGps}
+            onDismissRefusalNotification={handleMarkNotificationRead}
             onOpenCatalog={() => setActiveTab('services')}
           />
         )}
@@ -2236,6 +2890,17 @@ export default function App() {
           <AgentWorkspaceView
             bookings={bookings}
             agentName={userProfile?.displayName || 'Agent'}
+            agentUid={userProfile?.role === 'agent' ? firebaseUser?.uid : undefined}
+            isAdminPreview={isActualAdmin}
+            notifications={visibleNotifications.filter(
+              (n) =>
+                isActualAdmin ||
+                n.recipientId === firebaseUser?.uid ||
+                n.targetRoles.includes('agent')
+            )}
+            readNotificationIds={readNotificationIds}
+            onMarkNotificationRead={handleMarkNotificationRead}
+            onMarkAllNotificationsRead={handleMarkAllNotificationsRead}
             onToggleGps={handleToggleGps}
             onUpdateAgentGps={handleUpdateAgentGps}
             onStartPlacement={handleStartPlacement}
@@ -2315,13 +2980,25 @@ export default function App() {
       {/* AUTHENTICATION & REGISTRATION MODAL */}
       {showAuthModal && (
         <AuthModal
-          onAuthComplete={handleCompleteOnboarding}
+          initialError={authRedirectError}
+          pendingGoogleUser={pendingGoogleUser}
+          initialPartialProfile={pendingPartialProfile}
+          onBeginGoogleCompletion={(uid) => {
+            completingOnboardingUidRef.current = uid;
+          }}
+          onCancelGoogleOnboarding={handleSignOut}
+          onAuthComplete={async (profile) => {
+            setAuthRedirectError('');
+            await handleCompleteOnboarding(profile);
+          }}
           onLoginSuccess={() => {
+            setAuthRedirectError('');
             if (auth.currentUser) {
               syncSignedInUserProfile(auth.currentUser).catch(() => {});
             }
           }}
           onClose={() => {
+            setAuthRedirectError('');
             setShowAuthModal(false);
           }}
         />

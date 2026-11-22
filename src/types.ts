@@ -104,9 +104,17 @@ export interface BookingPromoApplied {
   originalPrice: number;
 }
 
+export interface AssignedAgentInfo {
+  uid: string;
+  displayName: string;
+  phone?: string;
+  commune?: string;
+}
+
 export interface Booking {
   id: string;
   ownerUid: string;
+  userId?: string;
   serviceId: string;
   serviceName: string;
   serviceCategory: ServiceItem['category'];
@@ -139,7 +147,11 @@ export interface Booking {
   finalPrice: number;
   status: BookingStatus;
   rejectionReason?: string;
+  refusalReason?: string;
+  refusedAt?: string;
   assignedAgents: string[];
+  assignedAgentIds?: string[];
+  assignedAgentDetails?: AssignedAgentInfo[];
   gpsActive: boolean;
   agentGps?: GpsPoint;
   startedAt?: string;
@@ -164,7 +176,8 @@ export type NotificationType =
   | 'client_thank_you'
   | 'agent_encouragement'
   | 'company_approved'
-  | 'company_rejected';
+  | 'company_rejected'
+  | 'order_refused';
 
 export type ActiveTabId =
   | 'home'
@@ -179,12 +192,16 @@ export interface AppNotification {
   type: NotificationType;
   title: string;
   body: string;
+  message?: string;
   targetRoles: Role[];
   targetAgentNames?: string[];
   targetOwnerUid?: string;
+  recipientId?: string;
+  orderId?: string;
   relatedId: string;
   relatedTab?: ActiveTabId;
   actorUid: string;
+  read?: boolean;
   createdAt: string;
 }
 

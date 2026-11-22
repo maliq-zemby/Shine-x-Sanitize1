@@ -3,6 +3,7 @@ import { getAnalytics, isSupported as isAnalyticsSupported, type Analytics } fro
 import {
   browserLocalPersistence,
   getAuth,
+  GoogleAuthProvider,
   indexedDBLocalPersistence,
   setPersistence,
 } from 'firebase/auth';
@@ -27,6 +28,8 @@ export const db = initializeFirestore(app, {
   experimentalForceLongPolling: true,
 });
 export const auth = getAuth(app);
+export const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({ prompt: 'select_account' });
 export const firebaseProjectId = firebaseConfig.projectId as string;
 export const firebaseAuthDomain = firebaseConfig.authDomain as string;
 
@@ -70,11 +73,33 @@ export async function verifyAdminBootstrapPassword(password: string): Promise<bo
   return false;
 }
 
-export function formatClassicAuthError(err: unknown): string {
+export function formatClassicAuthError(
+  err: unknown,
+  authMethod: 'password' | 'google' = 'password'
+): string {
   const code = (err as { code?: string })?.code || '';
 
   if (code === 'auth/operation-not-allowed') {
+    if (authMethod === 'google') {
+      return `La connexion avec Google n'est pas encore activée dans Firebase (${firebaseProjectId}). Ouvrez Firebase Console → Authentication → Sign-in method → activez « Google ».`;
+    }
     return `La connexion par mot de passe n'est pas encore activée dans Firebase (${firebaseProjectId}). Ouvrez Firebase Console → Authentication → Sign-in method → activez « Adresse e-mail/Mot de passe ».`;
+  }
+  if (code === 'auth/unauthorized-domain') {
+    const host = typeof window !== 'undefined' ? window.location.hostname : 'ce domaine';
+    return `Le domaine « ${host} » n'est pas autorisé pour Google Sign-In dans Firebase (${firebaseProjectId}). Ajoutez-le dans Firebase Console → Authentication → Settings → Authorized domains.`;
+  }
+  if (code === 'auth/popup-closed-by-user') {
+    return "La fenêtre de connexion Google a été fermée avant la fin de l'authentification.";
+  }
+  if (code === 'auth/cancelled-popup-request') {
+    return 'Une autre tentative de connexion Google est déjà en cours.';
+  }
+  if (code === 'auth/popup-blocked') {
+    return 'La fenêtre Google a été bloquée par votre navigateur. Autorisez les popups pour ce site puis réessayez.';
+  }
+  if (code === 'auth/account-exists-with-different-credential') {
+    return 'Un compte existe déjà avec cette adresse e-mail via une autre méthode de connexion.';
   }
   if (code === 'auth/user-not-found' || code === 'auth/invalid-credential' || code === 'auth/wrong-password') {
     return "Nom, prénom ou mot de passe incorrect. Vérifiez vos informations ou créez un compte dans l'onglet « Inscription ».";

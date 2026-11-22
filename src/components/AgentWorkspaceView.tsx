@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  BellRing,
   Camera,
+  CheckCheck,
   CheckCircle2,
   LocateFixed,
   Lock,
@@ -8,24 +10,70 @@ import {
   Navigation,
   Play,
   Square,
+  Tag,
   Upload,
+  Users,
 } from 'lucide-react';
 import { DEFAULT_GPS_POSITION } from '../data/quartiers';
-import { Booking, GpsPoint } from '../types';
+import { AppNotification, Booking, BookingStatus, GpsPoint } from '../types';
 import {
   HIGH_ACCURACY_GEO_OPTIONS,
   reverseGeocodeNeighborhood,
   useReverseGeocodedNeighborhood,
 } from '../utils/geocoding';
+import { getBookingPromoInfo } from '../utils/promotions';
 import { LiveGpsMap } from './LiveGpsMap';
 
 interface AgentWorkspaceViewProps {
   bookings: Booking[];
   agentName: string;
+  agentUid?: string;
+  isAdminPreview?: boolean;
+  notifications?: AppNotification[];
+  readNotificationIds?: string[];
+  onMarkNotificationRead?: (id: string) => void;
+  onMarkAllNotificationsRead?: () => void;
   onToggleGps: (bookingId: string, initialPoint?: GpsPoint) => void;
   onUpdateAgentGps: (bookingId: string, point: GpsPoint) => void;
   onStartPlacement: (bookingId: string, beforePhotoUrl?: string) => void;
   onFinishPlacement: (bookingId: string, afterPhotoUrl?: string, beforePhotoUrl?: string) => void;
+}
+
+const VALIDATED_MISSION_STATUSES: ReadonlySet<BookingStatus> = new Set([
+  'confirmed',
+  'in_transit',
+  'in_progress',
+  'completed',
+]);
+
+const STATUS_BADGE: Record<string, { label: string; className: string }> = {
+  confirmed: {
+    label: 'Validée · Prête au départ',
+    className: 'bg-sky-50 text-sky-800 border-sky-200',
+  },
+  in_transit: {
+    label: 'En route vers le client',
+    className: 'bg-amber-50 text-amber-800 border-amber-200',
+  },
+  in_progress: {
+    label: 'Intervention en cours',
+    className: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+  },
+  completed: {
+    label: 'Mission terminée',
+    className: 'bg-slate-100 text-slate-700 border-slate-200',
+  },
+};
+
+function formatAlertTime(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString('fr-FR', {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return "À l'instant";
+  }
 }
 
 const NeighborhoodLabel: React.FC<{ coords?: GpsPoint | null; fallback?: string }> = ({
@@ -66,21 +114,24 @@ function compressImageFile(file: File): Promise<string> {
 export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
   bookings,
   agentName,
+  agentUid,
+  isAdminPreview = false,
+  notifications = [],
+  readNotificationIds = [],
+  onMarkNotificationRead,
+  onMarkAllNotificationsRead,
   onToggleGps,
   onUpdateAgentGps,
   onStartPlacement,
   onFinishPlacement,
 }) => {
-  const agentMissions = bookings.filter(
-    (b) =>
-      b.status !== 'cancelled' &&
-      b.status !== 'rejected' &&
-      (b.assignedAgents.includes(agentName) ||
-        b.assignedAgents.length > 0 ||
-        b.status === 'confirmed' ||
-        b.status === 'in_transit' ||
-        b.status === 'in_progress')
-  );
+  const agentMissions = bookings.filter((b) => {
+    if (!VALIDATED_MISSION_STATUSES.has(b.status)) return false;
+    if (isAdminPreview) return true;
+    const matchesUid = agentUid ? (b.assignedAgentIds || []).includes(agentUid) : false;
+    const matchesName = b.assignedAgents.includes(agentName);
+    return matchesUid || matchesName;
+  });
 
   const [selectedMissionId, setSelectedMissionId] = useState<string | null>(
     agentMissions[0]?.id || null
@@ -88,6 +139,26 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
   const [beforeDrafts, setBeforeDrafts] = useState<Record<string, string>>({});
   const [afterDrafts, setAfterDrafts] = useState<Record<string, string>>({});
   const [photoErrors, setPhotoErrors] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (agentMissions.length === 0) {
+      if (selectedMissionId !== null) setSelectedMissionId(null);
+      return;
+    }
+    if (!selectedMissionId || !agentMissions.some((m) => m.id === selectedMissionId)) {
+      setSelectedMissionId(agentMissions[0].id);
+    }
+  }, [agentMissions, selectedMissionId]);
+
+  const relevantAlerts = notifications.filter(
+    (n) =>
+      n.type === 'agent_assigned' ||
+      n.type === 'agent_encouragement' ||
+      (agentUid ? n.recipientId === agentUid : false)
+  );
+  const isAlertUnread = (n: AppNotification) =>
+    n.read !== true && !readNotificationIds.includes(n.id);
+  const unreadAlertCount = relevantAlerts.filter(isAlertUnread).length;
 
   // Suivi GPS terrain haute précision (position par défaut : Amissa Chantal, Akanda)
   const [selfPosition, setSelfPosition] = useState<GpsPoint | null>(DEFAULT_GPS_POSITION);
@@ -322,11 +393,122 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">Espace Agent · {agentName}</h1>
-        <p className="text-xs text-slate-600 mt-1">
-          Visualisez votre quartier réel et vos positions GPS en direct (haute précision), marquez le début du placement avec photo avant puis validez la fin avec photo après.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Espace Agent · {agentName}</h1>
+          <p className="text-xs text-slate-600 mt-1">
+            Recevez vos commandes validées en temps réel, activez le GPS haute précision, marquez le début du placement avec photo avant puis validez la fin avec photo après.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-xs font-semibold text-slate-700 shadow-xs">
+            <span>Missions assignées :</span>
+            <strong className="text-emerald-700 tabular-nums">{agentMissions.length}</strong>
+          </span>
+          {unreadAlertCount > 0 && (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-600 text-white text-xs font-bold shadow-xs tabular-nums">
+              <BellRing className="w-3.5 h-3.5" />
+              <span>
+                {unreadAlertCount} nouvelle{unreadAlertCount > 1 ? 's' : ''} alerte
+                {unreadAlertCount > 1 ? 's' : ''}
+              </span>
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Alertes & Notifications dédiées à l'Agent */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="px-4 sm:px-5 py-3.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <BellRing
+              className={`w-4 h-4 ${unreadAlertCount > 0 ? 'text-rose-600' : 'text-emerald-700'}`}
+            />
+            <span className="text-xs font-bold text-slate-900">
+              Notifications &amp; Affectations en temps réel
+            </span>
+            {unreadAlertCount > 0 && (
+              <span className="px-2 py-0.5 rounded-md bg-rose-600 text-white text-[10px] font-bold tabular-nums">
+                {unreadAlertCount} non lue{unreadAlertCount > 1 ? 's' : ''}
+              </span>
+            )}
+          </div>
+          {unreadAlertCount > 0 && onMarkAllNotificationsRead && (
+            <button
+              type="button"
+              onClick={onMarkAllNotificationsRead}
+              className="text-xs font-semibold text-emerald-700 hover:text-emerald-800 inline-flex items-center gap-1"
+            >
+              <CheckCheck className="w-3.5 h-3.5" />
+              <span>Tout marquer comme lu</span>
+            </button>
+          )}
+        </div>
+
+        {relevantAlerts.length === 0 ? (
+          <div className="px-5 py-4 text-xs text-slate-500">
+            Aucune nouvelle notification d&apos;affectation pour le moment. Dès qu&apos;un gérant valide et vous assigne une commande, l&apos;alerte apparaît ici instantanément.
+          </div>
+        ) : (
+          <div className="divide-y divide-slate-100 max-h-64 overflow-y-auto">
+            {relevantAlerts.map((alert) => {
+              const unread = isAlertUnread(alert);
+              const targetBookingId = alert.orderId || alert.relatedId;
+              const hasTargetMission = agentMissions.some((m) => m.id === targetBookingId);
+
+              return (
+                <div
+                  key={alert.id}
+                  className={`px-4 sm:px-5 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors ${
+                    unread ? 'bg-emerald-50/50' : 'bg-white'
+                  }`}
+                >
+                  <div className="space-y-1 min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {unread && (
+                        <span className="w-2 h-2 rounded-full bg-rose-600 shrink-0" />
+                      )}
+                      <span className="text-xs font-bold text-slate-900">{alert.title}</span>
+                      <span className="text-[10px] font-mono text-slate-400 tabular-nums">
+                        {formatAlertTime(alert.createdAt)}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-600 leading-relaxed">
+                      {alert.message || alert.body}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    {hasTargetMission && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedMissionId(targetBookingId);
+                          if (unread && onMarkNotificationRead) {
+                            onMarkNotificationRead(alert.id);
+                          }
+                        }}
+                        className="px-3 py-1.5 bg-slate-900 hover:bg-emerald-700 text-white text-[11px] font-semibold rounded-lg transition-colors"
+                      >
+                        Voir la commande
+                      </button>
+                    )}
+                    {unread && onMarkNotificationRead && (
+                      <button
+                        type="button"
+                        onClick={() => onMarkNotificationRead(alert.id)}
+                        className="px-3 py-1.5 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-[11px] font-semibold rounded-lg transition-colors"
+                      >
+                        Marquer comme lu
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Bandeau Position & Quartier en direct (toujours accessible, même sans mission assignée) */}
@@ -401,7 +583,7 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
               Aucune mission affectée pour le moment
             </div>
             <p className="text-xs text-slate-500">
-              Votre position GPS et votre quartier actuel restent consultables sur la carte ci-dessus. Dès qu&apos;une commande vous est assignée, elle s&apos;affichera ici.
+              Votre position GPS et votre quartier actuel restent consultables sur la carte ci-dessus. Dès qu&apos;une commande validée vous est assignée, elle s&apos;affichera ici en temps réel.
             </p>
           </div>
         )}
@@ -413,20 +595,43 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
             afterDrafts[mission.id] ||
             mission.afterPhotos[mission.afterPhotos.length - 1];
           const err = photoErrors[mission.id];
+          const statusMeta = STATUS_BADGE[mission.status] || STATUS_BADGE.confirmed;
+          const promoInfo = getBookingPromoInfo(mission);
+          const isFocused = selectedMissionId === mission.id;
 
           return (
             <div
               key={mission.id}
-              className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-sm space-y-5"
+              className={`bg-white rounded-2xl border p-5 sm:p-6 shadow-sm space-y-5 transition-colors ${
+                isFocused
+                  ? 'border-emerald-500 ring-1 ring-emerald-500/20'
+                  : 'border-slate-200'
+              }`}
             >
               <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 border-b border-slate-100 pb-4">
-                <div className="space-y-1">
+                <div className="space-y-1.5">
                   <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
                     <span className="font-mono font-semibold text-emerald-800">{mission.id}</span>
+                    <span
+                      className={`inline-flex items-center px-2 py-0.5 rounded-md border text-[11px] font-semibold ${statusMeta.className}`}
+                    >
+                      {statusMeta.label}
+                    </span>
                     <span aria-hidden="true">·</span>
                     <span>Client : {mission.clientName}</span>
                     <span aria-hidden="true">·</span>
                     <span>{mission.clientPhone}</span>
+                    {promoInfo && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-bold">
+                        <Tag className="w-3 h-3" />
+                        <span>
+                          Promo{' '}
+                          {promoInfo.discountLabel ||
+                            (promoInfo.discountPercent ? `-${promoInfo.discountPercent}%` : '')}{' '}
+                          · {promoInfo.title}
+                        </span>
+                      </span>
+                    )}
                   </div>
                   <h3 className="text-base font-bold text-slate-900">{mission.serviceName}</h3>
                   <div className="text-xs text-slate-600 flex flex-wrap items-center gap-2">
@@ -447,6 +652,17 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
                       </span>
                     )}
                   </div>
+                  {mission.assignedAgents.length > 0 && (
+                    <div className="text-[11px] text-slate-600 flex items-center gap-1.5">
+                      <Users className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      <span>
+                        Équipe affectée :{' '}
+                        <strong className="text-slate-900">
+                          {mission.assignedAgents.join(', ')}
+                        </strong>
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 <div className="bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs shrink-0">
@@ -454,6 +670,14 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
                     <Lock className="w-3 h-3" />
                     <span>Tarif validé (non modifiable)</span>
                   </div>
+                  {promoInfo && (
+                    <div className="text-[11px] text-emerald-700 font-medium mt-0.5 tabular-nums">
+                      <span className="line-through text-slate-400">
+                        {promoInfo.originalPrice.toLocaleString()} XAF
+                      </span>{' '}
+                      <span>(-{promoInfo.discountAmount.toLocaleString()} XAF)</span>
+                    </div>
+                  )}
                   <div className="text-sm font-bold text-slate-900 tabular-nums mt-0.5">
                     {mission.finalPrice.toLocaleString()} XAF · {mission.paymentMethod}
                   </div>

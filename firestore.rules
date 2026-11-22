@@ -22,7 +22,10 @@ service cloud.firestore {
     }
 
     function isBootstrappedAdmin() {
-      return isSignedIn() && request.auth.token.email in ['zemby.maliq@shinexsanitize.app', 'maliqzemby8@gmail.com'];
+      return isSignedIn()
+        && ('email' in request.auth.token)
+        && request.auth.token.email is string
+        && request.auth.token.email.lower() in ['zemby.maliq@shinexsanitize.app', 'maliqzemby8@gmail.com'];
     }
 
     function hasUserDoc() {
@@ -34,28 +37,28 @@ service cloud.firestore {
     }
 
     function isNotBanned() {
-      return !hasUserDoc() || currentUserData().accountStatus != 'banned';
+      return !hasUserDoc() || currentUserData().get('accountStatus', 'active') != 'banned';
     }
 
     function isAdmin() {
       return isBootstrappedAdmin() || (
         hasUserDoc() &&
-        currentUserData().role == 'admin' &&
-        currentUserData().accountStatus == 'active'
+        currentUserData().get('role', '') == 'admin' &&
+        currentUserData().get('accountStatus', 'active') == 'active'
       );
     }
 
     function isActiveManager() {
       return hasUserDoc() &&
-        currentUserData().role == 'manager' &&
-        currentUserData().accountStatus == 'active' &&
+        currentUserData().get('role', '') == 'manager' &&
+        currentUserData().get('accountStatus', 'active') == 'active' &&
         currentUserData().get('status', 'approved') == 'approved';
     }
 
     function isActiveAgent() {
       return hasUserDoc() &&
-        currentUserData().role == 'agent' &&
-        currentUserData().accountStatus == 'active';
+        currentUserData().get('role', '') == 'agent' &&
+        currentUserData().get('accountStatus', 'active') == 'active';
     }
 
     function isOwner(userId) {
@@ -70,7 +73,7 @@ service cloud.firestore {
         && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120
         && (!('firstName' in data) || (data.firstName is string && data.firstName.size() <= 80))
         && (!('lastName' in data) || (data.lastName is string && data.lastName.size() <= 80))
-        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 500))
+        && (!('photoURL' in data) || data.photoURL == null || (data.photoURL is string && data.photoURL.size() <= 500))
         && data.role in ['client', 'agent', 'manager', 'admin']
         && data.accountStatus in ['active', 'pending', 'rejected', 'banned']
         && data.phone is string && data.phone.size() >= 8 && data.phone.size() <= 40 && data.phone.matches('^\\+[1-9][0-9\\s\\-]{6,30}$')
@@ -119,9 +122,10 @@ service cloud.firestore {
 
     function isValidBooking(data) {
       return data.keys().hasAll(['id', 'ownerUid', 'serviceId', 'serviceName', 'serviceCategory', 'clientName', 'clientPhone', 'commune', 'address', 'clientCoords', 'details', 'clientOfferPrice', 'finalPrice', 'status', 'assignedAgents', 'gpsActive', 'clientGpsActive', 'beforePhotos', 'afterPhotos', 'paymentMethod', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['id', 'ownerUid', 'serviceId', 'serviceName', 'serviceCategory', 'vehicleType', 'clientName', 'clientPhone', 'commune', 'address', 'clientCoords', 'details', 'clientOfferPrice', 'promoApplied', 'originalPrice', 'discountAmount', 'appliedPromotionId', 'appliedPromotionTitle', 'appliedPromotionDiscount', 'managerCounterPrice', 'priceAdjustmentNote', 'finalPrice', 'status', 'rejectionReason', 'assignedAgents', 'gpsActive', 'clientGpsActive', 'agentGps', 'startedAt', 'completedAt', 'beforePhotos', 'afterPhotos', 'photosArchivedAt', 'paymentMethod', 'rating', 'review', 'reviewSubmittedAt', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'ownerUid', 'userId', 'serviceId', 'serviceName', 'serviceCategory', 'vehicleType', 'clientName', 'clientPhone', 'commune', 'address', 'clientCoords', 'details', 'clientOfferPrice', 'promoApplied', 'originalPrice', 'discountAmount', 'appliedPromotionId', 'appliedPromotionTitle', 'appliedPromotionDiscount', 'managerCounterPrice', 'priceAdjustmentNote', 'finalPrice', 'status', 'rejectionReason', 'refusalReason', 'refusedAt', 'assignedAgents', 'assignedAgentIds', 'assignedAgentDetails', 'gpsActive', 'clientGpsActive', 'agentGps', 'startedAt', 'completedAt', 'beforePhotos', 'afterPhotos', 'photosArchivedAt', 'paymentMethod', 'rating', 'review', 'reviewSubmittedAt', 'createdAt', 'updatedAt'])
         && isValidId(data.id)
         && data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128
+        && (!('userId' in data) || (data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128))
         && data.serviceId is string && data.serviceId.size() <= 64
         && data.serviceName is string && data.serviceName.size() >= 2 && data.serviceName.size() <= 180
         && data.serviceCategory is string && data.serviceCategory.size() <= 40
@@ -144,7 +148,11 @@ service cloud.firestore {
         && data.finalPrice is number && data.finalPrice >= 1000
         && data.status in ['pending_negotiation', 'counter_offered', 'confirmed', 'in_transit', 'in_progress', 'completed', 'rejected', 'cancelled']
         && (!('rejectionReason' in data) || (data.rejectionReason is string && data.rejectionReason.size() <= 300))
+        && (!('refusalReason' in data) || (data.refusalReason is string && data.refusalReason.size() <= 300))
+        && (!('refusedAt' in data) || (data.refusedAt is string && data.refusedAt.size() <= 64))
         && data.assignedAgents is list && data.assignedAgents.size() <= 10 && (data.assignedAgents.size() == 0 || data.assignedAgents[0] is string)
+        && (!('assignedAgentIds' in data) || (data.assignedAgentIds is list && data.assignedAgentIds.size() <= 10 && (data.assignedAgentIds.size() == 0 || data.assignedAgentIds[0] is string)))
+        && (!('assignedAgentDetails' in data) || (data.assignedAgentDetails is list && data.assignedAgentDetails.size() <= 10 && (data.assignedAgentDetails.size() == 0 || data.assignedAgentDetails[0] is map)))
         && data.gpsActive is bool
         && data.clientGpsActive is bool
         && (!('agentGps' in data) || data.agentGps is map)
@@ -179,17 +187,21 @@ service cloud.firestore {
 
     function isValidNotification(data) {
       return data.keys().hasAll(['id', 'type', 'title', 'body', 'targetRoles', 'relatedId', 'actorUid', 'createdAt'])
-        && data.keys().hasOnly(['id', 'type', 'title', 'body', 'targetRoles', 'targetAgentNames', 'targetOwnerUid', 'relatedId', 'relatedTab', 'actorUid', 'createdAt'])
+        && data.keys().hasOnly(['id', 'type', 'title', 'body', 'message', 'targetRoles', 'targetAgentNames', 'targetOwnerUid', 'recipientId', 'orderId', 'relatedId', 'relatedTab', 'actorUid', 'read', 'createdAt'])
         && isValidId(data.id)
-        && data.type in ['new_booking', 'agent_assigned', 'new_registration', 'promo_approved', 'mission_completed', 'client_thank_you', 'agent_encouragement', 'company_approved', 'company_rejected']
+        && data.type in ['new_booking', 'agent_assigned', 'new_registration', 'promo_approved', 'mission_completed', 'client_thank_you', 'agent_encouragement', 'company_approved', 'company_rejected', 'order_refused']
         && data.title is string && data.title.size() >= 2 && data.title.size() <= 140
         && data.body is string && data.body.size() >= 2 && data.body.size() <= 400
+        && (!('message' in data) || (data.message is string && data.message.size() >= 2 && data.message.size() <= 400))
         && data.targetRoles is list && data.targetRoles.size() >= 1 && data.targetRoles.size() <= 4 && data.targetRoles.hasOnly(['client', 'agent', 'manager', 'admin'])
         && (!('targetAgentNames' in data) || (data.targetAgentNames is list && data.targetAgentNames.size() <= 10 && (data.targetAgentNames.size() == 0 || data.targetAgentNames[0] is string)))
         && (!('targetOwnerUid' in data) || (data.targetOwnerUid is string && data.targetOwnerUid.size() <= 128))
+        && (!('recipientId' in data) || (data.recipientId is string && data.recipientId.size() >= 1 && data.recipientId.size() <= 128))
+        && (!('orderId' in data) || (data.orderId is string && data.orderId.size() >= 1 && data.orderId.size() <= 128))
         && data.relatedId is string && data.relatedId.size() >= 1 && data.relatedId.size() <= 128
         && (!('relatedTab' in data) || data.relatedTab in ['home', 'services', 'mes_reservations', 'suivi_commande', 'agent_space', 'admin'])
         && data.actorUid is string && data.actorUid.size() >= 1 && data.actorUid.size() <= 128
+        && (!('read' in data) || data.read is bool)
         && data.createdAt is string && data.createdAt.size() <= 64;
     }
 
@@ -198,12 +210,12 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow get: if isOwner(userId) || isAdmin();
-      allow list: if isAdmin();
+      allow get: if isOwner(userId) || isAdmin() || (isActiveManager() && existing().role == 'agent' && existing().accountStatus == 'active');
+      allow list: if isAdmin() || (isActiveManager() && existing().role == 'agent' && existing().accountStatus == 'active');
       allow create: if isSignedIn() && isOwner(userId) && isValidId(userId) && isValidUserProfile(incoming())
         && incoming().uid == request.auth.uid
         && (
-          (incoming().role in ['client', 'agent'] && incoming().accountStatus == 'active')
+          (incoming().role in ['client', 'agent'] && incoming().accountStatus == 'active' && incoming().get('status', 'approved') == 'approved' && incoming().get('rejectionReason', '') == '')
           || (incoming().role == 'manager' && incoming().accountStatus == 'pending' && incoming().get('status', '') == 'pending' && incoming().get('rejectionReason', 'x') == '' && 'companyName' in incoming() && incoming().companyName.size() >= 2)
           || (isBootstrappedAdmin() && incoming().role == 'admin' && incoming().accountStatus == 'active')
         );
@@ -211,10 +223,23 @@ service cloud.firestore {
         isAdmin()
         || (
           isOwner(userId)
+          && existing().get('accountStatus', 'active') != 'banned'
+          && (!('role' in existing()) || existing().role == null || existing().role == '' || !('accountStatus' in existing()) || existing().accountStatus == null || existing().accountStatus == '')
+          && incoming().uid == request.auth.uid
+          && (
+            (incoming().role in ['client', 'agent'] && incoming().accountStatus == 'active' && incoming().get('status', 'approved') == 'approved' && incoming().get('rejectionReason', '') == '')
+            || (incoming().role == 'manager' && incoming().accountStatus == 'pending' && incoming().get('status', '') == 'pending' && incoming().get('rejectionReason', 'x') == '' && 'companyName' in incoming() && incoming().companyName.size() >= 2)
+            || (isBootstrappedAdmin() && incoming().role == 'admin' && incoming().accountStatus == 'active')
+          )
+        )
+        || (
+          isOwner(userId)
           && existing().accountStatus != 'banned'
           && incoming().uid == existing().uid
           && incoming().role == existing().role
           && incoming().accountStatus == existing().accountStatus
+          && incoming().get('status', 'approved') == existing().get('status', 'approved')
+          && incoming().get('rejectionReason', '') == existing().get('rejectionReason', '')
           && incoming().createdAt == existing().createdAt
           && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'firstName', 'lastName', 'photoURL', 'phone', 'companyName', 'companyDescription', 'commune', 'updatedAt'])
         )
@@ -230,13 +255,15 @@ service cloud.firestore {
 
     match /bookings/{bookingId} {
       allow get: if isSignedIn() && isValidId(bookingId) && (
-        existing().ownerUid == request.auth.uid || isAdmin() || isActiveManager() || isActiveAgent()
+        isAdmin() || isActiveManager() || (isActiveAgent() && request.auth.uid in existing().get('assignedAgentIds', [])) || existing().ownerUid == request.auth.uid || existing().userId == request.auth.uid
       );
       allow list: if isSignedIn() && (
-        existing().ownerUid == request.auth.uid || isAdmin() || isActiveManager() || isActiveAgent()
+        isAdmin() || isActiveManager() || (isActiveAgent() && request.auth.uid in existing().get('assignedAgentIds', [])) || existing().ownerUid == request.auth.uid || existing().userId == request.auth.uid
       );
       allow create: if isSignedIn() && isNotBanned() && isValidId(bookingId) && isValidBooking(incoming())
+        && incoming().id == bookingId
         && incoming().ownerUid == request.auth.uid
+        && (!('userId' in incoming()) || incoming().userId == request.auth.uid)
         && incoming().status == 'pending_negotiation';
       allow update: if isSignedIn() && isNotBanned() && isValidId(bookingId) && isValidBooking(incoming())
         && incoming().id == existing().id
@@ -247,7 +274,7 @@ service cloud.firestore {
           || (
             isActiveManager()
             && !(existing().status in ['completed', 'rejected', 'cancelled'])
-            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'managerCounterPrice', 'priceAdjustmentNote', 'finalPrice', 'rejectionReason', 'assignedAgents', 'gpsActive', 'clientGpsActive', 'agentGps', 'updatedAt'])
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'userId', 'managerCounterPrice', 'priceAdjustmentNote', 'finalPrice', 'rejectionReason', 'refusalReason', 'refusedAt', 'assignedAgents', 'assignedAgentIds', 'assignedAgentDetails', 'gpsActive', 'clientGpsActive', 'agentGps', 'updatedAt'])
           )
           || (
             isActiveManager()
@@ -258,12 +285,13 @@ service cloud.firestore {
           )
           || (
             isActiveAgent()
+            && request.auth.uid in existing().get('assignedAgentIds', [])
             && existing().status in ['confirmed', 'in_transit', 'in_progress']
             && incoming().finalPrice == existing().finalPrice
             && incoming().diff(existing()).affectedKeys().hasOnly(['gpsActive', 'agentGps', 'status', 'startedAt', 'completedAt', 'beforePhotos', 'afterPhotos', 'updatedAt'])
           )
           || (
-            existing().ownerUid == request.auth.uid
+            (existing().ownerUid == request.auth.uid || existing().userId == request.auth.uid)
             && !(existing().status in ['rejected', 'cancelled'])
             && incoming().finalPrice == existing().finalPrice
             && (
@@ -311,29 +339,46 @@ service cloud.firestore {
     match /notifications/{notificationId} {
       allow get: if isSignedIn() && isNotBanned() && isValidId(notificationId) && (
         isAdmin()
-        || (hasUserDoc() && currentUserData().role in existing().targetRoles
-            && (!('targetOwnerUid' in existing()) || existing().targetOwnerUid == request.auth.uid))
+        || existing().actorUid == request.auth.uid
+        || existing().recipientId == request.auth.uid
+        || existing().targetOwnerUid == request.auth.uid
+        || existing().type == 'promo_approved'
+        || (hasUserDoc() && currentUserData().get('role', '') in existing().targetRoles
+            && !('targetOwnerUid' in existing())
+            && !('recipientId' in existing()))
       );
       allow list: if isSignedIn() && (
-        existing().actorUid == request.auth.uid
-        || ('client' in existing().targetRoles && (!('targetOwnerUid' in existing()) || existing().targetOwnerUid == request.auth.uid))
-        || isAdmin()
+        isAdmin()
         || isActiveManager()
-        || isActiveAgent()
+        || existing().actorUid == request.auth.uid
+        || existing().recipientId == request.auth.uid
+        || existing().targetOwnerUid == request.auth.uid
+        || existing().type == 'promo_approved'
       );
       allow create: if isSignedIn() && isNotBanned() && isValidId(notificationId) && isValidNotification(incoming())
+        && incoming().id == notificationId
         && incoming().actorUid == request.auth.uid
         && (
           (incoming().type == 'new_booking' && incoming().targetRoles.hasOnly(['manager', 'admin', 'agent']))
           || (incoming().type == 'new_registration' && incoming().targetRoles.hasOnly(['manager', 'admin']))
-          || (incoming().type == 'agent_assigned' && (isAdmin() || isActiveManager()) && incoming().targetRoles.hasOnly(['agent', 'manager', 'admin']))
+          || (incoming().type == 'agent_assigned' && (isAdmin() || isActiveManager()) && incoming().targetRoles.hasOnly(['agent', 'manager', 'admin']) && (!('recipientId' in incoming()) || (incoming().recipientId is string && incoming().recipientId.size() >= 1)) && (!('orderId' in incoming()) || (incoming().orderId is string && incoming().orderId.size() >= 1)))
           || (incoming().type == 'promo_approved' && (isAdmin() || isActiveManager()) && incoming().targetRoles.hasOnly(['client', 'agent', 'manager', 'admin']))
           || (incoming().type == 'mission_completed' && (isAdmin() || isActiveManager() || isActiveAgent()) && incoming().targetRoles.hasOnly(['manager', 'admin']))
           || (incoming().type == 'client_thank_you' && (isAdmin() || isActiveManager() || isActiveAgent()) && incoming().targetRoles.hasOnly(['client']) && 'targetOwnerUid' in incoming() && incoming().targetOwnerUid.size() >= 1)
           || (incoming().type in ['company_approved', 'company_rejected'] && isAdmin() && incoming().targetRoles.hasOnly(['manager']) && 'targetOwnerUid' in incoming() && incoming().targetOwnerUid.size() >= 1)
-          || (incoming().type == 'agent_encouragement' && (isAdmin() || isActiveManager()) && incoming().targetRoles.hasOnly(['agent', 'admin']))
+          || (incoming().type == 'agent_encouragement' && (isAdmin() || isActiveManager()) && incoming().targetRoles.hasOnly(['agent', 'admin']) && (!('recipientId' in incoming()) || (incoming().recipientId is string && incoming().recipientId.size() >= 1)))
+          || (incoming().type == 'order_refused' && (isAdmin() || isActiveManager()) && incoming().targetRoles.hasOnly(['client']) && 'recipientId' in incoming() && incoming().recipientId != null && incoming().recipientId is string && incoming().recipientId.size() >= 1 && 'orderId' in incoming() && incoming().orderId.size() >= 1 && incoming().get('read', false) == false)
         );
-      allow update: if false;
+      allow update: if isSignedIn() && isNotBanned() && isValidId(notificationId) && isValidNotification(incoming())
+        && incoming().id == existing().id
+        && incoming().actorUid == existing().actorUid
+        && incoming().createdAt == existing().createdAt
+        && (
+          existing().recipientId == request.auth.uid
+          || (('targetOwnerUid' in existing()) && existing().targetOwnerUid == request.auth.uid)
+        )
+        && incoming().diff(existing()).affectedKeys().hasOnly(['read'])
+        && incoming().read == true;
       allow delete: if isAdmin() || isActiveManager();
     }
   }

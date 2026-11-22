@@ -220,6 +220,7 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
     const newBooking: Booking = {
       id: `SHINE-${Math.floor(1000 + Math.random() * 9000)}`,
       ownerUid,
+      ...(ownerUid ? { userId: ownerUid } : {}),
       serviceId: service.id,
       serviceName: fullServiceName,
       serviceCategory: service.category,
@@ -259,6 +260,7 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
       finalPrice: finalSubmittedOffer,
       status: 'pending_negotiation',
       assignedAgents: [],
+      assignedAgentIds: [],
       gpsActive: false,
       beforePhotos: [service.image],
       afterPhotos: [],

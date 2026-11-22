@@ -76,7 +76,7 @@ export async function showBrowserPushNotification(notif: AppNotification): Promi
   if (Notification.permission !== 'granted') return;
 
   const options: NotificationOptions = {
-    body: notif.body,
+    body: notif.message || notif.body,
     icon: '/pwa-192x192.png',
     badge: '/pwa-192x192.png',
     tag: notif.id,
@@ -101,5 +101,40 @@ export async function showBrowserPushNotification(notif: AppNotification): Promi
     } catch {
       // ignore environments restricting direct Notification constructor
     }
+  }
+}
+
+export function playAssignmentAlertChime(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return;
+
+    const ctx = new AudioCtx();
+    const now = ctx.currentTime;
+
+    const playTone = (freq: number, startOffset: number, duration: number) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, now + startOffset);
+      gain.gain.setValueAtTime(0.001, now + startOffset);
+      gain.gain.exponentialRampToValueAtTime(0.08, now + startOffset + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + startOffset + duration);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + startOffset);
+      osc.stop(now + startOffset + duration + 0.02);
+    };
+
+    playTone(587.33, 0, 0.16);
+    playTone(880, 0.14, 0.24);
+    setTimeout(() => {
+      ctx.close().catch(() => {});
+    }, 600);
+  } catch {
+    // ignore autoplay restriction or unsupported AudioContext
   }
 }

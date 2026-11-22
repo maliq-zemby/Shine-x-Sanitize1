@@ -11,9 +11,10 @@ import {
   Plus,
   Star,
   Tag,
+  X,
 } from 'lucide-react';
 import { MANAGER_DISPLAY_PHONE, MANAGER_NAME, MANAGER_WHATSAPP } from '../data/mockData';
-import { Booking, GpsPoint } from '../types';
+import { AppNotification, Booking, GpsPoint } from '../types';
 import { HIGH_ACCURACY_GEO_OPTIONS, reverseGeocodeNeighborhood } from '../utils/geocoding';
 import { getBookingPromoInfo } from '../utils/promotions';
 import { LiveGpsMap } from './LiveGpsMap';
@@ -21,11 +22,14 @@ import { WhatsAppComposerModal } from './WhatsAppComposerModal';
 
 interface ClientReservationsViewProps {
   bookings: Booking[];
+  refusalNotifications?: AppNotification[];
+  readNotificationIds?: string[];
   isAuthenticated: boolean;
   onOpenAuth: () => void;
   onAcceptCounterOffer: (bookingId: string) => void;
   onSubmitReview: (bookingId: string, rating: number, comment: string) => void;
   onToggleClientGps: (bookingId: string, coords?: GpsPoint) => void;
+  onDismissRefusalNotification?: (notifId: string) => void;
   onOpenCatalog: () => void;
 }
 
@@ -45,11 +49,14 @@ const isTrackableBooking = (b: Booking) =>
 
 export const ClientReservationsView: React.FC<ClientReservationsViewProps> = ({
   bookings,
+  refusalNotifications = [],
+  readNotificationIds = [],
   isAuthenticated,
   onOpenAuth,
   onAcceptCounterOffer,
   onSubmitReview,
   onToggleClientGps,
+  onDismissRefusalNotification,
   onOpenCatalog,
 }) => {
   const activeTrackableBookings = bookings.filter(isTrackableBooking);
@@ -154,6 +161,36 @@ export const ClientReservationsView: React.FC<ClientReservationsViewProps> = ({
           <span>{gpsNotice}</span>
         </div>
       )}
+
+      {isAuthenticated &&
+        refusalNotifications
+          .filter((n) => n.read !== true && !readNotificationIds.includes(n.id))
+          .map((notif) => (
+            <div
+              key={notif.id}
+              role="alert"
+              className="bg-rose-50 border border-rose-300 text-rose-950 rounded-2xl px-4 py-3.5 text-xs flex items-start justify-between gap-3 shadow-xs"
+            >
+              <div className="flex items-start gap-2.5 min-w-0">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <div className="space-y-0.5">
+                  <div className="font-bold text-rose-900">{notif.title}</div>
+                  <p className="text-rose-800 leading-relaxed">{notif.message || notif.body}</p>
+                </div>
+              </div>
+              {onDismissRefusalNotification && (
+                <button
+                  type="button"
+                  onClick={() => onDismissRefusalNotification(notif.id)}
+                  aria-label="Marquer comme lu"
+                  className="px-2.5 py-1 rounded-lg bg-rose-100 hover:bg-rose-200 text-rose-800 font-semibold text-[11px] shrink-0 inline-flex items-center gap-1"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  <span>Lu</span>
+                </button>
+              )}
+            </div>
+          ))}
 
       {!isAuthenticated ? (
         <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center space-y-4 shadow-sm">
@@ -341,9 +378,22 @@ export const ClientReservationsView: React.FC<ClientReservationsViewProps> = ({
                     </span>
                   </div>
                   <p className="text-rose-900 leading-relaxed">
-                    {booking.rejectionReason ||
+                    {booking.refusalReason ||
+                      booking.rejectionReason ||
                       "Le gérant n'a pas pu valider cette intervention. Le suivi GPS en direct a été automatiquement désactivé."}
                   </p>
+                  {booking.refusedAt && (
+                    <p className="text-[11px] text-rose-700 font-medium">
+                      Refusée le{' '}
+                      {new Date(booking.refusedAt).toLocaleString('fr-FR', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </p>
+                  )}
                   <p className="text-[11px] text-rose-700">
                     Vous pouvez contacter le gérant sur WhatsApp pour plus d'informations ou créer une nouvelle réservation.
                   </p>

@@ -14,6 +14,7 @@ import {
   UserPlus,
   Wrench,
   X,
+  XCircle,
 } from 'lucide-react';
 import { ActiveTabId, AppNotification, NotificationType } from '../types';
 import { PushPermissionState } from '../utils/notifications';
@@ -101,6 +102,11 @@ const TYPE_META: Record<
     badgeClass: 'bg-rose-100 text-rose-700',
     Icon: ShieldX,
   },
+  order_refused: {
+    label: 'Commande refusée',
+    badgeClass: 'bg-rose-100 text-rose-700',
+    Icon: XCircle,
+  },
 };
 
 function formatNotifTime(iso: string): string {
@@ -129,7 +135,9 @@ export const NotificationBell: React.FC<NotificationCenterProps> = ({
   const [requestingPush, setRequestingPush] = useState(false);
 
   const freshNotifications = notifications.filter((n) => isNotificationFresh(n.createdAt));
-  const unreadCount = freshNotifications.filter((n) => !readIds.includes(n.id)).length;
+  const isNotificationUnread = (n: AppNotification) =>
+    n.read !== true && !readIds.includes(n.id);
+  const unreadCount = freshNotifications.filter(isNotificationUnread).length;
 
   const handleRequestPush = async () => {
     setRequestingPush(true);
@@ -229,7 +237,7 @@ export const NotificationBell: React.FC<NotificationCenterProps> = ({
                 </div>
               ) : (
                 freshNotifications.map((notif) => {
-                  const isUnread = !readIds.includes(notif.id);
+                  const isUnread = isNotificationUnread(notif);
                   const meta = TYPE_META[notif.type] || TYPE_META.new_booking;
                   const Icon = meta.Icon;
 
@@ -269,7 +277,7 @@ export const NotificationBell: React.FC<NotificationCenterProps> = ({
                           <span className="truncate">{notif.title}</span>
                         </div>
                         <p className="text-[11px] text-slate-600 leading-relaxed">
-                          {notif.body}
+                          {notif.message || notif.body}
                         </p>
                       </div>
                     </button>
@@ -298,22 +306,37 @@ export const LiveNotificationToast: React.FC<LiveNotificationToastProps> = ({
   if (!notification || !isNotificationFresh(notification.createdAt)) return null;
   const meta = TYPE_META[notification.type] || TYPE_META.new_booking;
   const Icon = meta.Icon;
+  const isRefusalToast = notification.type === 'order_refused';
 
   return (
     <div
       role="status"
       aria-live="polite"
-      className="fixed bottom-4 right-4 z-50 max-w-sm w-[calc(100vw-2rem)] bg-slate-900 text-white rounded-2xl p-4 shadow-2xl border border-slate-700 flex items-start gap-3"
+      className={`fixed bottom-4 right-4 z-50 max-w-sm w-[calc(100vw-2rem)] text-white rounded-2xl p-4 shadow-2xl border flex items-start gap-3 ${
+        isRefusalToast
+          ? 'bg-rose-950 border-rose-700'
+          : 'bg-slate-900 border-slate-700'
+      }`}
     >
-      <div className="w-9 h-9 rounded-xl bg-emerald-700 text-white flex items-center justify-center shrink-0">
+      <div
+        className={`w-9 h-9 rounded-xl text-white flex items-center justify-center shrink-0 ${
+          isRefusalToast ? 'bg-rose-600' : 'bg-emerald-700'
+        }`}
+      >
         <Icon className="w-4 h-4" />
       </div>
       <div className="min-w-0 flex-1 space-y-1">
-        <div className="text-[10px] font-bold uppercase tracking-wide text-emerald-300">
+        <div
+          className={`text-[10px] font-bold uppercase tracking-wide ${
+            isRefusalToast ? 'text-rose-300' : 'text-emerald-300'
+          }`}
+        >
           {meta.label} · Temps réel
         </div>
         <div className="text-xs font-bold text-white leading-snug">{notification.title}</div>
-        <p className="text-[11px] text-slate-300 leading-relaxed">{notification.body}</p>
+        <p className="text-[11px] text-slate-200 leading-relaxed">
+          {notification.message || notification.body}
+        </p>
         <div className="pt-1 flex items-center gap-2">
           <button
             type="button"

@@ -426,6 +426,14 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
                   <div className="space-y-1">
                     <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                      {user.photoURL && (
+                        <img
+                          src={user.photoURL}
+                          alt={user.displayName}
+                          className="w-6 h-6 rounded-full object-cover border border-slate-200"
+                          referrerPolicy="no-referrer"
+                        />
+                      )}
                       <span className="font-bold text-slate-900 text-sm">{user.displayName}</span>
                       <span aria-hidden="true">·</span>
                       <span className="font-semibold text-emerald-800">

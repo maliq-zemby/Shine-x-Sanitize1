@@ -42,12 +42,16 @@ interface ManagerOrdersViewProps {
   companyDisplayName?: string;
   currentUserUid?: string;
   isAdmin?: boolean;
-  onValidateOrder: (bookingId: string) => void;
+  onValidateOrder: (
+    bookingId: string,
+    selectedAgentIds?: string[],
+    selectedAgentNames?: string[]
+  ) => Promise<void> | void;
   onRefuseOrder: (bookingId: string, reason: string) => void;
   onDeleteOrder: (bookingId: string) => void;
   onArchivePhotos: (bookingId: string) => void;
   onUpdatePrice: (bookingId: string, newPrice: number, note: string) => void;
-  onAssignAgents: (bookingId: string, agents: string[]) => void;
+  onAssignAgents: (bookingId: string, agents: string[], agentIds?: string[]) => void;
   onUpdateServiceBasePrice: (serviceId: string, newBasePrice: number) => void;
   onCreatePromotion: (
     promo: Omit<Promotion, 'id' | 'status' | 'createdAt' | 'createdByUid'>
@@ -99,6 +103,12 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
   const [priceInput, setPriceInput] = useState<number>(0);
   const [priceNote, setPriceNote] = useState<string>('');
   const [assigningBookingId, setAssigningBookingId] = useState<string | null>(null);
+  const [validatingBookingId, setValidatingBookingId] = useState<string | null>(null);
+  const [validationAgentDraft, setValidationAgentDraft] = useState<
+    Record<string, { ids: string[]; names: string[] }>
+  >({});
+  const [validationError, setValidationError] = useState<Record<string, string>>({});
+  const [validatingBusyId, setValidatingBusyId] = useState<string | null>(null);
   const [assignError, setAssignError] = useState<Record<string, string>>({});
   const [customAgentDraft, setCustomAgentDraft] = useState<Record<string, string>>({});
   const [refusingBookingId, setRefusingBookingId] = useState<string | null>(null);
@@ -153,18 +163,35 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
     .filter((b) => b.status !== 'cancelled' && b.status !== 'rejected')
     .reduce((sum, b) => sum + b.finalPrice, 0);
 
-  const getBusyBookingForAgent = (agentName: string, currentBookingId: string): Booking | undefined =>
+  const getBusyBookingForAgent = (
+    agentName: string,
+    currentBookingId: string,
+    agentUid?: string
+  ): Booking | undefined =>
     bookings.find(
       (b) =>
         b.id !== currentBookingId &&
         (b.status === 'in_transit' || b.status === 'in_progress') &&
-        b.assignedAgents.includes(agentName)
+        (b.assignedAgents.includes(agentName) ||
+          (agentUid ? (b.assignedAgentIds || []).includes(agentUid) : false))
     );
 
-  const toggleAgentForBooking = (booking: Booking, agentName: string) => {
-    const exists = booking.assignedAgents.includes(agentName);
+  const resolveAgentIdsForNames = (names: string[]): string[] => {
+    const ids = new Set<string>();
+    names.forEach((name) => {
+      const match = registeredAgents.find((a) => a.displayName === name);
+      if (match) ids.add(match.uid);
+    });
+    return Array.from(ids);
+  };
+
+  const toggleAgentForBooking = (booking: Booking, agentName: string, agentUid?: string) => {
+    const existsByName = booking.assignedAgents.includes(agentName);
+    const existsById = agentUid ? (booking.assignedAgentIds || []).includes(agentUid) : false;
+    const exists = existsByName || existsById;
+
     if (!exists) {
-      const busyBooking = getBusyBookingForAgent(agentName, booking.id);
+      const busyBooking = getBusyBookingForAgent(agentName, booking.id, agentUid);
       if (busyBooking) {
         setAssignError((prev) => ({
           ...prev,
@@ -181,10 +208,106 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
       return updated;
     });
 
-    const next = exists
+    const nextNames = exists
       ? booking.assignedAgents.filter((a) => a !== agentName)
       : [...booking.assignedAgents, agentName];
-    onAssignAgents(booking.id, next);
+    const currentIds =
+      booking.assignedAgentIds && booking.assignedAgentIds.length > 0
+        ? booking.assignedAgentIds
+        : resolveAgentIdsForNames(booking.assignedAgents);
+    const resolvedUid =
+      agentUid || registeredAgents.find((a) => a.displayName === agentName)?.uid;
+    const nextIds = resolvedUid
+      ? exists
+        ? currentIds.filter((id) => id !== resolvedUid)
+        : Array.from(new Set([...currentIds, resolvedUid]))
+      : currentIds;
+
+    onAssignAgents(booking.id, nextNames, nextIds);
+  };
+
+  const openValidationPanel = (booking: Booking) => {
+    const existingIds =
+      booking.assignedAgentIds && booking.assignedAgentIds.length > 0
+        ? booking.assignedAgentIds
+        : resolveAgentIdsForNames(booking.assignedAgents);
+    setValidationAgentDraft((prev) => ({
+      ...prev,
+      [booking.id]: {
+        ids: existingIds,
+        names: [...booking.assignedAgents],
+      },
+    }));
+    setValidationError((prev) => {
+      const next = { ...prev };
+      delete next[booking.id];
+      return next;
+    });
+    setAssigningBookingId(null);
+    setValidatingBookingId(validatingBookingId === booking.id ? null : booking.id);
+  };
+
+  const toggleValidationAgent = (booking: Booking, agent: UserProfile) => {
+    const current = validationAgentDraft[booking.id] || {
+      ids: booking.assignedAgentIds || [],
+      names: booking.assignedAgents || [],
+    };
+    const isSelected =
+      current.ids.includes(agent.uid) || current.names.includes(agent.displayName);
+
+    if (!isSelected) {
+      const busyBooking = getBusyBookingForAgent(agent.displayName, booking.id, agent.uid);
+      if (busyBooking) {
+        setValidationError((prev) => ({
+          ...prev,
+          [booking.id]: `Impossible d'affecter ${agent.displayName} : déjà en intervention sur #${busyBooking.id}.`,
+        }));
+        return;
+      }
+    }
+
+    setValidationError((prev) => {
+      if (!prev[booking.id]) return prev;
+      const next = { ...prev };
+      delete next[booking.id];
+      return next;
+    });
+
+    const nextIds = isSelected
+      ? current.ids.filter((id) => id !== agent.uid)
+      : Array.from(new Set([...current.ids, agent.uid]));
+    const nextNames = isSelected
+      ? current.names.filter((n) => n !== agent.displayName)
+      : Array.from(new Set([...current.names, agent.displayName]));
+
+    setValidationAgentDraft((prev) => ({
+      ...prev,
+      [booking.id]: { ids: nextIds, names: nextNames },
+    }));
+  };
+
+  const handleConfirmValidation = async (booking: Booking) => {
+    const draft = validationAgentDraft[booking.id] || {
+      ids: booking.assignedAgentIds || resolveAgentIdsForNames(booking.assignedAgents),
+      names: booking.assignedAgents,
+    };
+
+    if (registeredAgents.length > 0 && draft.ids.length === 0 && draft.names.length === 0) {
+      setValidationError((prev) => ({
+        ...prev,
+        [booking.id]:
+          'Sélectionnez au moins un agent disponible à affecter avant de valider la commande.',
+      }));
+      return;
+    }
+
+    setValidatingBusyId(booking.id);
+    try {
+      await onValidateOrder(booking.id, draft.ids, draft.names);
+      setValidatingBookingId(null);
+    } finally {
+      setValidatingBusyId(null);
+    }
   };
 
   const handleSaveServicePrice = (service: ServiceItem) => {
@@ -588,8 +711,14 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
                       ) : (
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                           {registeredAgents.map((agent) => {
-                            const assigned = booking.assignedAgents.includes(agent.displayName);
-                            const busyBooking = getBusyBookingForAgent(agent.displayName, booking.id);
+                            const assigned =
+                              booking.assignedAgents.includes(agent.displayName) ||
+                              (booking.assignedAgentIds || []).includes(agent.uid);
+                            const busyBooking = getBusyBookingForAgent(
+                              agent.displayName,
+                              booking.id,
+                              agent.uid
+                            );
                             const isLocked = !assigned && Boolean(busyBooking);
                             const lockLabel = busyBooking
                               ? busyBooking.status === 'in_transit'
@@ -601,7 +730,9 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
                               <button
                                 key={agent.uid}
                                 type="button"
-                                onClick={() => toggleAgentForBooking(booking, agent.displayName)}
+                                onClick={() =>
+                                  toggleAgentForBooking(booking, agent.displayName, agent.uid)
+                                }
                                 className={`p-3 rounded-xl border text-left transition-colors flex items-center justify-between gap-2 ${
                                   assigned
                                     ? 'bg-emerald-700 text-white border-emerald-700'
@@ -733,7 +864,9 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
                       <div className="space-y-0.5">
                         <div className="font-bold">Commande refusée (GPS désactivé)</div>
                         <p className="text-rose-800">
-                          {booking.rejectionReason || 'Commande refusée par le gérant.'}
+                          {booking.refusalReason ||
+                            booking.rejectionReason ||
+                            'Commande refusée par le gérant.'}
                         </p>
                       </div>
                     </div>
@@ -777,6 +910,130 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
                     </div>
                   )}
 
+                  {validatingBookingId === booking.id && (
+                    <div className="bg-emerald-50/80 border border-emerald-200 rounded-xl p-4 space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div>
+                          <div className="text-xs font-bold text-emerald-950">
+                            Valider la commande #{booking.id} &amp; Affecter les agents
+                          </div>
+                          <p className="text-[11px] text-emerald-900">
+                            Montant final conservé :{' '}
+                            <strong className="tabular-nums">
+                              {booking.finalPrice.toLocaleString()} XAF
+                            </strong>
+                            {promoInfo
+                              ? ` (Promo ${promoInfo.discountLabel || promoInfo.title} appliquée)`
+                              : ''}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setValidatingBookingId(null)}
+                          className="text-xs font-semibold text-slate-600 hover:text-slate-900 self-start sm:self-auto"
+                        >
+                          Fermer
+                        </button>
+                      </div>
+
+                      {validationError[booking.id] && (
+                        <div
+                          role="alert"
+                          className="bg-rose-50 border border-rose-300 text-rose-900 rounded-xl px-3.5 py-2.5 text-xs font-medium flex items-start gap-2"
+                        >
+                          <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                          <span>{validationError[booking.id]}</span>
+                        </div>
+                      )}
+
+                      {registeredAgents.length === 0 ? (
+                        <div className="bg-white border border-emerald-200 rounded-xl p-3 text-xs text-slate-600">
+                          Aucun compte Agent actif enregistré pour le moment. Vous pouvez tout de même valider ou ajouter un nom via « Désigner les agents ».
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                          {registeredAgents.map((agent) => {
+                            const draft = validationAgentDraft[booking.id] || {
+                              ids: booking.assignedAgentIds || [],
+                              names: booking.assignedAgents || [],
+                            };
+                            const isSelected =
+                              draft.ids.includes(agent.uid) ||
+                              draft.names.includes(agent.displayName);
+                            const busyBooking = getBusyBookingForAgent(
+                              agent.displayName,
+                              booking.id,
+                              agent.uid
+                            );
+                            const isLocked = !isSelected && Boolean(busyBooking);
+
+                            return (
+                              <button
+                                key={agent.uid}
+                                type="button"
+                                onClick={() => toggleValidationAgent(booking, agent)}
+                                className={`p-3 rounded-xl border text-left transition-colors flex items-center justify-between gap-2 ${
+                                  isSelected
+                                    ? 'bg-emerald-700 text-white border-emerald-700'
+                                    : isLocked
+                                    ? 'bg-amber-50/70 text-slate-600 border-amber-300'
+                                    : 'bg-white text-slate-800 border-slate-200 hover:bg-slate-50'
+                                }`}
+                              >
+                                <div className="min-w-0">
+                                  <div className="text-xs font-bold truncate">
+                                    {agent.displayName}
+                                  </div>
+                                  <div
+                                    className={`text-[11px] truncate ${
+                                      isSelected
+                                        ? 'text-emerald-100'
+                                        : isLocked
+                                        ? 'text-amber-800 font-semibold'
+                                        : 'text-slate-500'
+                                    }`}
+                                  >
+                                    {isLocked
+                                      ? `En mission · #${busyBooking?.id}`
+                                      : `${agent.phone} · ${agent.commune || 'Libreville'}`}
+                                  </div>
+                                </div>
+                                {isSelected ? (
+                                  <Check className="w-4 h-4 shrink-0" />
+                                ) : isLocked ? (
+                                  <Lock className="w-4 h-4 text-amber-700 shrink-0" />
+                                ) : null}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-end gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => setValidatingBookingId(null)}
+                          className="px-3.5 py-2 min-h-[40px] text-xs font-semibold text-slate-600"
+                        >
+                          Annuler
+                        </button>
+                        <button
+                          type="button"
+                          disabled={validatingBusyId === booking.id}
+                          onClick={() => handleConfirmValidation(booking)}
+                          className="px-4 py-2 min-h-[40px] bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white text-xs font-semibold rounded-xl inline-flex items-center gap-1.5"
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>
+                            {validatingBusyId === booking.id
+                              ? 'Validation en cours...'
+                              : 'Confirmer la validation & notifier'}
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="flex flex-wrap items-center gap-2.5 pt-2 border-t border-slate-100">
                     {booking.status !== 'cancelled' &&
                       booking.status !== 'rejected' &&
@@ -786,7 +1043,7 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
                             booking.status === 'counter_offered') && (
                             <button
                               type="button"
-                              onClick={() => onValidateOrder(booking.id)}
+                              onClick={() => openValidationPanel(booking)}
                               className="px-4 py-2.5 min-h-[44px] bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-1.5"
                             >
                               <Check className="w-3.5 h-3.5" />
