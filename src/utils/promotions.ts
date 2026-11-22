@@ -111,13 +111,22 @@ export function buildBookingPromoApplied(
   promo: Promotion,
   breakdown: DiscountedPriceBreakdown
 ): BookingPromoApplied {
+  const promoId = String(promo.id || '').trim().slice(0, 64);
+  const safeTitle = (promo.title || '').trim().slice(0, 140) || 'Offre promotionnelle';
+  const safeDiscountLabel =
+    (breakdown.shortLabel || promo.discountLabel || '').trim().slice(0, 40) || 'Promo';
+  const safeDiscountPercent =
+    typeof breakdown.discountPercent === 'number' && Number.isFinite(breakdown.discountPercent)
+      ? Math.min(100, Math.max(0, breakdown.discountPercent))
+      : null;
+
   return {
-    promotionId: promo.id.slice(0, 64),
-    title: promo.title.slice(0, 140),
-    discountLabel: breakdown.shortLabel.slice(0, 40),
-    discountPercent: breakdown.discountPercent,
-    discountAmount: breakdown.discountAmount,
-    originalPrice: breakdown.originalPrice,
+    ...(promoId ? { promotionId: promoId } : {}),
+    title: safeTitle,
+    discountLabel: safeDiscountLabel,
+    discountPercent: safeDiscountPercent,
+    discountAmount: Math.max(0, Math.round(breakdown.discountAmount || 0)),
+    originalPrice: Math.max(1000, Math.round(breakdown.originalPrice || 1000)),
   };
 }
 

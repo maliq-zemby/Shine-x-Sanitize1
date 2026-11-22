@@ -785,7 +785,9 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
                 <div className="bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs shrink-0">
                   <div className="flex items-center gap-1.5 text-slate-500">
                     <Lock className="w-3 h-3" />
-                    <span>Tarif validé (non modifiable)</span>
+                    <span>
+                      {promoInfo ? 'Montant total (promo incluse)' : 'Montant total validé'}
+                    </span>
                   </div>
                   {promoInfo && (
                     <div className="text-[11px] text-emerald-700 font-medium mt-0.5 tabular-nums">

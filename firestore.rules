@@ -58,12 +58,13 @@ service cloud.firestore {
     function isActiveAgent() {
       return hasUserDoc() &&
         currentUserData().get('role', '') == 'agent' &&
-        (
-          currentUserData().get('accountStatus', 'active') == 'active' ||
-          (currentUserData().get('accountStatus', null) == null && currentUserData().get('status', 'approved') == 'approved')
-        ) &&
+        currentUserData().get('accountStatus', 'active') != 'banned' &&
+        currentUserData().get('accountStatus', 'active') != 'rejected' &&
         currentUserData().get('status', 'approved') != 'rejected' &&
-        currentUserData().get('status', 'approved') != 'pending';
+        (
+          currentUserData().get('accountStatus', 'active') in ['active', 'approved'] ||
+          currentUserData().get('status', 'approved') in ['approved', 'active']
+        );
     }
 
     function isAssignedAgent(bookingData) {
@@ -74,6 +75,12 @@ service cloud.firestore {
 
     function isOwner(userId) {
       return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isBookingClientOwner(bookingData) {
+      return (('ownerUid' in bookingData) && bookingData.ownerUid == request.auth.uid)
+        || (('userId' in bookingData) && bookingData.userId == request.auth.uid)
+        || (('clientId' in bookingData) && bookingData.clientId == request.auth.uid);
     }
 
     function isValidUserProfile(data) {
@@ -123,20 +130,21 @@ service cloud.firestore {
         && promo.keys().hasAll(['title', 'discountAmount', 'originalPrice'])
         && promo.keys().hasOnly(['promotionId', 'title', 'discountLabel', 'discountPercent', 'discountAmount', 'originalPrice'])
         && promo.title is string && promo.title.size() >= 1 && promo.title.size() <= 140
-        && (!('promotionId' in promo) || (promo.promotionId is string && promo.promotionId.size() <= 64))
-        && (!('discountLabel' in promo) || (promo.discountLabel is string && promo.discountLabel.size() <= 40))
+        && (!('promotionId' in promo) || promo.promotionId == null || (promo.promotionId is string && promo.promotionId.size() <= 64))
+        && (!('discountLabel' in promo) || promo.discountLabel == null || (promo.discountLabel is string && promo.discountLabel.size() <= 40))
         && (!('discountPercent' in promo) || promo.discountPercent == null || (promo.discountPercent is number && promo.discountPercent >= 0 && promo.discountPercent <= 100))
         && promo.discountAmount is number && promo.discountAmount >= 0
-        && promo.originalPrice is number && promo.originalPrice >= 1000
+        && promo.originalPrice is number && promo.originalPrice >= 0
       );
     }
 
     function isValidBooking(data) {
       return data.keys().hasAll(['id', 'ownerUid', 'serviceId', 'serviceName', 'serviceCategory', 'clientName', 'clientPhone', 'commune', 'address', 'clientCoords', 'details', 'clientOfferPrice', 'finalPrice', 'status', 'assignedAgents', 'gpsActive', 'clientGpsActive', 'beforePhotos', 'afterPhotos', 'paymentMethod', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['id', 'ownerUid', 'userId', 'serviceId', 'serviceName', 'serviceCategory', 'vehicleType', 'clientName', 'clientPhone', 'commune', 'address', 'clientCoords', 'details', 'clientOfferPrice', 'promoApplied', 'originalPrice', 'discountAmount', 'appliedPromotionId', 'appliedPromotionTitle', 'appliedPromotionDiscount', 'managerCounterPrice', 'priceAdjustmentNote', 'finalPrice', 'status', 'rejectionReason', 'refusalReason', 'refusedAt', 'assignedAgents', 'assignedAgentIds', 'assignedAgentDetails', 'gpsActive', 'clientGpsActive', 'agentGps', 'startedAt', 'completedAt', 'beforePhotos', 'afterPhotos', 'photosArchivedAt', 'agentsCongratulatedAt', 'agentsCongratulatedBy', 'paymentMethod', 'rating', 'review', 'reviewSubmittedAt', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'ownerUid', 'userId', 'clientId', 'serviceId', 'serviceName', 'serviceCategory', 'vehicleType', 'clientName', 'clientPhone', 'commune', 'address', 'clientCoords', 'details', 'clientOfferPrice', 'promoApplied', 'originalPrice', 'discountAmount', 'appliedPromotionId', 'appliedPromotionTitle', 'appliedPromotionDiscount', 'managerCounterPrice', 'priceAdjustmentNote', 'finalPrice', 'status', 'rejectionReason', 'refusalReason', 'refusedAt', 'assignedAgents', 'assignedAgentIds', 'assignedAgentDetails', 'gpsActive', 'clientGpsActive', 'agentGps', 'startedAt', 'completedAt', 'beforePhotos', 'afterPhotos', 'photosArchivedAt', 'agentsCongratulatedAt', 'agentsCongratulatedBy', 'paymentMethod', 'rating', 'review', 'reviewSubmittedAt', 'clientComment', 'clientCommentAt', 'createdAt', 'updatedAt'])
         && isValidId(data.id)
         && data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128
         && (!('userId' in data) || data.userId == null || (data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128))
+        && (!('clientId' in data) || data.clientId == null || (data.clientId is string && data.clientId.size() >= 1 && data.clientId.size() <= 128))
         && data.serviceId is string && data.serviceId.size() <= 64
         && data.serviceName is string && data.serviceName.size() >= 2 && data.serviceName.size() <= 180
         && data.serviceCategory is string && data.serviceCategory.size() <= 40
@@ -178,8 +186,49 @@ service cloud.firestore {
         && (!('rating' in data) || data.rating == null || (data.rating is number && data.rating >= 1 && data.rating <= 5))
         && (!('review' in data) || data.review == null || (data.review is string && data.review.size() <= 800))
         && (!('reviewSubmittedAt' in data) || data.reviewSubmittedAt == null || (data.reviewSubmittedAt is string && data.reviewSubmittedAt.size() <= 64))
+        && (!('clientComment' in data) || data.clientComment == null || (data.clientComment is string && data.clientComment.size() <= 800))
+        && (!('clientCommentAt' in data) || data.clientCommentAt == null || (data.clientCommentAt is string && data.clientCommentAt.size() <= 64))
         && data.createdAt is string && data.createdAt.size() <= 64
         && data.updatedAt is string && data.updatedAt.size() <= 64;
+    }
+
+    function isValidAgentBookingUpdate(data, prev) {
+      return data.keys().hasAll(['status', 'updatedAt'])
+        && data.status in ['confirmed', 'in_transit', 'in_progress', 'completed']
+        && (!('id' in prev) || data.id == prev.id)
+        && (!('ownerUid' in prev) || data.ownerUid == prev.ownerUid)
+        && (!('createdAt' in prev) || data.createdAt == prev.createdAt)
+        && (!('assignedAgentIds' in prev) || data.assignedAgentIds == prev.assignedAgentIds)
+        && (!('finalPrice' in prev) || data.finalPrice == prev.finalPrice)
+        && data.updatedAt is string && data.updatedAt.size() >= 4 && data.updatedAt.size() <= 64
+        && (!('gpsActive' in data) || data.gpsActive is bool)
+        && (!('agentGps' in data) || data.agentGps == null || data.agentGps is map)
+        && (!('startedAt' in data) || data.startedAt == null || (data.startedAt is string && data.startedAt.size() <= 64))
+        && (!('completedAt' in data) || data.completedAt == null || (data.completedAt is string && data.completedAt.size() <= 64))
+        && (!('beforePhotos' in data) || data.beforePhotos == null || (data.beforePhotos is list && data.beforePhotos.size() <= 5 && (data.beforePhotos.size() == 0 || data.beforePhotos[0] is string)))
+        && (!('afterPhotos' in data) || data.afterPhotos == null || (data.afterPhotos is list && data.afterPhotos.size() <= 5 && (data.afterPhotos.size() == 0 || data.afterPhotos[0] is string)));
+    }
+
+    function isValidClientCommentUpdate(data, prev) {
+      return data.keys().hasAll(['updatedAt'])
+        && (!('id' in prev) || data.id == prev.id)
+        && (!('ownerUid' in prev) || data.ownerUid == prev.ownerUid)
+        && (!('userId' in prev) || data.userId == prev.userId)
+        && (!('clientId' in prev) || data.clientId == prev.clientId)
+        && (!('createdAt' in prev) || data.createdAt == prev.createdAt)
+        && (!('status' in prev) || data.status == prev.status)
+        && (!('finalPrice' in prev) || data.finalPrice == prev.finalPrice)
+        && (!('assignedAgentIds' in prev) || data.assignedAgentIds == prev.assignedAgentIds)
+        && data.updatedAt is string && data.updatedAt.size() >= 4 && data.updatedAt.size() <= 64
+        && (!('rating' in data) || data.rating == null || (data.rating is number && data.rating >= 1 && data.rating <= 5))
+        && (!('clientComment' in data) || (data.clientComment is string && data.clientComment.size() >= 1 && data.clientComment.size() <= 800))
+        && (!('clientCommentAt' in data) || data.clientCommentAt == null || (data.clientCommentAt is string && data.clientCommentAt.size() >= 4 && data.clientCommentAt.size() <= 64))
+        && (!('review' in data) || (data.review is string && data.review.size() >= 1 && data.review.size() <= 800))
+        && (!('reviewSubmittedAt' in data) || data.reviewSubmittedAt == null || (data.reviewSubmittedAt is string && data.reviewSubmittedAt.size() >= 4 && data.reviewSubmittedAt.size() <= 64))
+        && (
+          ('clientComment' in data && data.clientComment is string && data.clientComment.size() >= 1)
+          || ('review' in data && data.review is string && data.review.size() >= 1)
+        );
     }
 
     function isValidPromotion(data) {
@@ -268,22 +317,36 @@ service cloud.firestore {
 
     match /bookings/{bookingId} {
       allow get: if isSignedIn() && isValidId(bookingId) && (
-        isAdmin() || isActiveManager() || (isActiveAgent() && isAssignedAgent(existing())) || existing().ownerUid == request.auth.uid || existing().userId == request.auth.uid
+        isAdmin() || isActiveManager() || (isActiveAgent() && isAssignedAgent(existing())) || isBookingClientOwner(existing())
       );
       allow list: if isSignedIn() && (
-        isAdmin() || isActiveManager() || (isActiveAgent() && isAssignedAgent(existing())) || existing().ownerUid == request.auth.uid || existing().userId == request.auth.uid
+        isAdmin() || isActiveManager() || (isActiveAgent() && request.auth.uid in existing().assignedAgentIds) || existing().ownerUid == request.auth.uid || existing().userId == request.auth.uid || existing().clientId == request.auth.uid
       );
       allow create: if isSignedIn() && isNotBanned() && isValidId(bookingId) && isValidBooking(incoming())
         && incoming().id == bookingId
         && incoming().ownerUid == request.auth.uid
         && (!('userId' in incoming()) || incoming().userId == request.auth.uid)
+        && (!('clientId' in incoming()) || incoming().clientId == request.auth.uid)
         && incoming().status == 'pending_negotiation';
       allow update: if isSignedIn() && isNotBanned() && isValidId(bookingId)
-        && incoming().id == existing().id
-        && incoming().ownerUid == existing().ownerUid
-        && incoming().createdAt == existing().createdAt
+        && (!('id' in existing()) || incoming().id == existing().id)
+        && (!('ownerUid' in existing()) || incoming().ownerUid == existing().ownerUid)
+        && (!('createdAt' in existing()) || incoming().createdAt == existing().createdAt)
         && (
           isAdmin()
+          || (
+            isActiveAgent()
+            && isAssignedAgent(existing())
+            && existing().status in ['confirmed', 'in_transit', 'in_progress']
+            && isValidAgentBookingUpdate(incoming(), existing())
+            && incoming().diff(existing()).affectedKeys().hasOnly(['gpsActive', 'agentGps', 'status', 'startedAt', 'completedAt', 'beforePhotos', 'afterPhotos', 'updatedAt'])
+          )
+          || (
+            isBookingClientOwner(existing())
+            && !(existing().status in ['rejected', 'cancelled'])
+            && isValidClientCommentUpdate(incoming(), existing())
+            && incoming().diff(existing()).affectedKeys().hasOnly(['clientComment', 'clientCommentAt', 'review', 'reviewSubmittedAt', 'rating', 'updatedAt'])
+          )
           || (
             isValidBooking(incoming())
             && (
@@ -300,21 +363,13 @@ service cloud.firestore {
                 && incoming().diff(existing()).affectedKeys().hasOnly(['beforePhotos', 'afterPhotos', 'photosArchivedAt', 'agentsCongratulatedAt', 'agentsCongratulatedBy', 'updatedAt'])
               )
               || (
-                isActiveAgent()
-                && isAssignedAgent(existing())
-                && existing().status in ['confirmed', 'in_transit', 'in_progress']
-                && incoming().status in ['confirmed', 'in_transit', 'in_progress', 'completed']
-                && incoming().finalPrice == existing().finalPrice
-                && incoming().diff(existing()).affectedKeys().hasOnly(['gpsActive', 'agentGps', 'status', 'startedAt', 'completedAt', 'beforePhotos', 'afterPhotos', 'updatedAt'])
-              )
-              || (
-                (existing().ownerUid == request.auth.uid || existing().userId == request.auth.uid)
+                isBookingClientOwner(existing())
                 && !(existing().status in ['rejected', 'cancelled'])
                 && incoming().finalPrice == existing().finalPrice
                 && (
                   (incoming().diff(existing()).affectedKeys().hasOnly(['clientGpsActive', 'clientCoords', 'updatedAt']))
                   || (existing().status == 'counter_offered' && incoming().status == 'confirmed' && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
-                  || (incoming().diff(existing()).affectedKeys().hasOnly(['rating', 'review', 'reviewSubmittedAt', 'updatedAt']))
+                  || (incoming().diff(existing()).affectedKeys().hasOnly(['rating', 'review', 'reviewSubmittedAt', 'clientComment', 'clientCommentAt', 'updatedAt']))
                 )
               )
             )

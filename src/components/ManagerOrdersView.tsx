@@ -15,6 +15,7 @@ import {
   Navigation,
   Pencil,
   Plus,
+  Star,
   Tag,
   Trash2,
   Users,
@@ -663,6 +664,9 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
               const isEditingPrice = editingPriceId === booking.id;
               const isAssigning = assigningBookingId === booking.id;
               const promoInfo = getBookingPromoInfo(booking);
+              const clientCommentText = (booking.clientComment || booking.review || '').trim();
+              const clientCommentDate =
+                booking.clientCommentAt || booking.reviewSubmittedAt || '';
 
               return (
                 <div
@@ -684,6 +688,15 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
                             <Tag className="w-3 h-3" />
                             <span>
                               Promo {promoInfo.discountLabel || (promoInfo.discountPercent ? `-${promoInfo.discountPercent}%` : '')} · {promoInfo.title}
+                            </span>
+                          </span>
+                        )}
+                        {clientCommentText && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-amber-900 text-[11px] font-bold">
+                            <Star className="w-3 h-3 fill-amber-400 text-amber-500" />
+                            <span>
+                              Avis client
+                              {typeof booking.rating === 'number' ? ` · ${booking.rating}/5` : ''}
                             </span>
                           </span>
                         )}
@@ -1136,6 +1149,47 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
                         </div>
                       </div>
                     )}
+
+                  {clientCommentText && (
+                    <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-4 space-y-1.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-100 text-amber-950 text-[11px] font-bold">
+                            <MessageCircle className="w-3 h-3 text-amber-700" />
+                            <span>Commentaire client</span>
+                          </span>
+                          {typeof booking.rating === 'number' && (
+                            <div className="flex items-center gap-0.5" aria-label={`Note ${booking.rating} sur 5`}>
+                              {[1, 2, 3, 4, 5].map((star) => (
+                                <Star
+                                  key={star}
+                                  className={`w-3.5 h-3.5 ${
+                                    star <= (booking.rating || 5)
+                                      ? 'fill-amber-400 text-amber-500'
+                                      : 'text-slate-300'
+                                  }`}
+                                />
+                              ))}
+                              <span className="text-[11px] font-bold text-amber-950 ml-1 tabular-nums">
+                                {booking.rating}/5
+                              </span>
+                            </div>
+                          )}
+                          <span className="text-[11px] font-medium text-slate-600">
+                            par {booking.clientName}
+                          </span>
+                        </div>
+                        {clientCommentDate && (
+                          <span className="text-[11px] font-mono text-slate-500 tabular-nums">
+                            {formatOrderTimestamp(clientCommentDate)}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-800 leading-relaxed whitespace-pre-wrap break-words">
+                        {clientCommentText}
+                      </p>
+                    </div>
+                  )}
 
                   {(booking.status === 'rejected' || booking.status === 'cancelled') && (
                     <div className="bg-rose-50 border border-rose-200 rounded-xl p-3.5 text-xs text-rose-900 flex items-start gap-2.5">

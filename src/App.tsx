@@ -563,12 +563,19 @@ export default function App() {
     if (userProfile.role === 'client') {
       const byOwner = new Map<string, Booking>();
       const byUserId = new Map<string, Booking>();
+      const byClientId = new Map<string, Booking>();
       const syncMergedClientBookings = () => {
         const merged = new Map<string, Booking>();
         byOwner.forEach((b, id) => merged.set(id, b));
         byUserId.forEach((b, id) => merged.set(id, b));
+        byClientId.forEach((b, id) => merged.set(id, b));
         const list = Array.from(merged.values())
-          .filter((b) => b.ownerUid === firebaseUser.uid || b.userId === firebaseUser.uid)
+          .filter(
+            (b) =>
+              b.ownerUid === firebaseUser.uid ||
+              b.userId === firebaseUser.uid ||
+              b.clientId === firebaseUser.uid
+          )
           .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
         setBookings(list);
       };
@@ -603,9 +610,25 @@ export default function App() {
         }
       );
 
+      const unsubClientId = onSnapshot(
+        query(bookingsRef, where('clientId', '==', firebaseUser.uid)),
+        (snapshot) => {
+          byClientId.clear();
+          snapshot.docs.forEach((d) => {
+            const data = d.data() as Booking;
+            byClientId.set(data.id || d.id, data);
+          });
+          syncMergedClientBookings();
+        },
+        (error) => {
+          console.warn('[bookings] Optional clientId listener skipped:', error);
+        }
+      );
+
       return () => {
         unsubOwner();
         unsubUserId();
+        unsubClientId();
       };
     }
 
@@ -1143,33 +1166,17 @@ export default function App() {
         }
 
         if (pendingBooking) {
-          const scopedBooking: Booking = {
-            ...pendingBooking,
-            ownerUid: safeProfile.uid,
-            userId: safeProfile.uid,
-            assignedAgentIds: pendingBooking.assignedAgentIds || [],
-            clientName: pendingBooking.clientName || safeProfile.displayName,
-            clientPhone: pendingBooking.clientPhone || safeProfile.phone,
-          };
+          const scopedBooking = buildScopedBookingPayload(
+            pendingBooking,
+            safeProfile.uid,
+            safeProfile.displayName,
+            safeProfile.phone
+          );
           setPendingBooking(null);
           setBookings((prev) => [scopedBooking, ...prev]);
           setActiveTab('mes_reservations');
           await setDoc(doc(db, 'bookings', scopedBooking.id), scopedBooking);
-          await publishNotification({
-            type: 'new_booking',
-            title: `Nouvelle commande #${scopedBooking.id}`,
-            body: `${scopedBooking.clientName} · ${scopedBooking.serviceName} à ${scopedBooking.commune} (${scopedBooking.clientOfferPrice.toLocaleString()} XAF)`,
-            targetRoles:
-              scopedBooking.assignedAgents.length > 0
-                ? ['manager', 'admin', 'agent']
-                : ['manager', 'admin'],
-            ...(scopedBooking.assignedAgents.length > 0
-              ? { targetAgentNames: scopedBooking.assignedAgents }
-              : {}),
-            relatedId: scopedBooking.id,
-            relatedTab: 'suivi_commande',
-            actorUid: safeProfile.uid,
-          });
+          await publishNewBookingNotification(scopedBooking, safeProfile.uid);
         } else {
           setActiveTab(getDashboardTabForRole(safeProfile.role));
         }
@@ -1199,9 +1206,116 @@ export default function App() {
     setActiveTab('home');
   };
 
+  const buildScopedBookingPayload = (
+    rawBooking: Booking,
+    uid: string,
+    fallbackName?: string,
+    fallbackPhone?: string
+  ): Booking => {
+    const cleanPhoneRaw = (rawBooking.clientPhone || fallbackPhone || '+241 00 00 00 00').trim();
+    const safePhone = (cleanPhoneRaw.length >= 4 ? cleanPhoneRaw : '+241 00 00 00 00').slice(0, 40);
+    const safeName = (rawBooking.clientName || fallbackName || 'Client').trim().slice(0, 120) || 'Client';
+    const safeCommune = (rawBooking.commune || 'Libreville').trim();
+    const safeAddress = (rawBooking.address || 'Libreville').trim();
+    const safeServiceName = (rawBooking.serviceName || 'Prestation Shine-x-Sanitize').trim();
+    const safeOfferPrice = Math.max(1000, Math.round(rawBooking.clientOfferPrice || 1000));
+    const safeFinalPrice = Math.max(1000, Math.round(rawBooking.finalPrice || safeOfferPrice));
+
+    const rawPromo = rawBooking.promoApplied;
+    const normalizedPromo =
+      rawPromo && typeof rawPromo === 'object'
+        ? {
+            ...(typeof rawPromo.promotionId === 'string' && rawPromo.promotionId.trim()
+              ? { promotionId: rawPromo.promotionId.trim().slice(0, 64) }
+              : {}),
+            title:
+              (typeof rawPromo.title === 'string' ? rawPromo.title.trim() : '').slice(0, 140) ||
+              'Offre promotionnelle',
+            discountLabel:
+              (typeof rawPromo.discountLabel === 'string'
+                ? rawPromo.discountLabel.trim()
+                : ''
+              ).slice(0, 40) || 'Promo',
+            discountPercent:
+              typeof rawPromo.discountPercent === 'number' &&
+              Number.isFinite(rawPromo.discountPercent)
+                ? Math.min(100, Math.max(0, rawPromo.discountPercent))
+                : null,
+            discountAmount: Math.max(0, Math.round(rawPromo.discountAmount || 0)),
+            originalPrice: Math.max(1000, Math.round(rawPromo.originalPrice || safeFinalPrice)),
+          }
+        : undefined;
+
+    const payload: Booking = {
+      ...rawBooking,
+      ownerUid: uid,
+      userId: uid,
+      serviceId: String(rawBooking.serviceId || '').slice(0, 64),
+      serviceName: (safeServiceName.length >= 2 ? safeServiceName : 'Service').slice(0, 180),
+      serviceCategory: rawBooking.serviceCategory,
+      clientName: safeName,
+      clientPhone: safePhone,
+      commune: (safeCommune.length >= 2 ? safeCommune : 'Libreville').slice(0, 120),
+      address: (safeAddress.length >= 2 ? safeAddress : 'Libreville').slice(0, 240),
+      clientOfferPrice: safeOfferPrice,
+      ...(normalizedPromo ? { promoApplied: normalizedPromo } : {}),
+      finalPrice: safeFinalPrice,
+      status: 'pending_negotiation',
+      assignedAgents: Array.isArray(rawBooking.assignedAgents)
+        ? rawBooking.assignedAgents.slice(0, 10)
+        : [],
+      assignedAgentIds: Array.isArray(rawBooking.assignedAgentIds)
+        ? rawBooking.assignedAgentIds.slice(0, 10)
+        : [],
+      gpsActive: Boolean(rawBooking.gpsActive),
+      clientGpsActive: Boolean(rawBooking.clientGpsActive),
+      beforePhotos: Array.isArray(rawBooking.beforePhotos)
+        ? rawBooking.beforePhotos.filter((p): p is string => typeof p === 'string' && p.length > 0).slice(0, 5)
+        : [],
+      afterPhotos: Array.isArray(rawBooking.afterPhotos)
+        ? rawBooking.afterPhotos.filter((p): p is string => typeof p === 'string' && p.length > 0).slice(0, 5)
+        : [],
+      createdAt: String(rawBooking.createdAt || "À l'instant").slice(0, 64),
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (!normalizedPromo) {
+      delete payload.promoApplied;
+    }
+    delete payload.clientId;
+    return payload;
+  };
+
+  const publishNewBookingNotification = async (scopedBooking: Booking, actorUid?: string) => {
+    const promoSuffix = scopedBooking.promoApplied
+      ? ` · Promo ${scopedBooking.promoApplied.discountLabel || scopedBooking.promoApplied.title}`
+      : '';
+    const body = `${scopedBooking.clientName} · ${scopedBooking.serviceName} à ${scopedBooking.commune} (${scopedBooking.finalPrice.toLocaleString()} XAF${promoSuffix})`.slice(
+      0,
+      400
+    );
+
+    await publishNotification({
+      type: 'new_booking',
+      title: `Nouvelle commande #${scopedBooking.id}`,
+      body,
+      targetRoles:
+        scopedBooking.assignedAgents.length > 0
+          ? ['manager', 'admin', 'agent']
+          : ['manager', 'admin'],
+      ...(scopedBooking.assignedAgents.length > 0
+        ? { targetAgentNames: scopedBooking.assignedAgents }
+        : {}),
+      relatedId: scopedBooking.id,
+      relatedTab: 'suivi_commande',
+      ...(actorUid ? { actorUid } : {}),
+    });
+  };
+
   // Client Actions
   const handleCreateBooking = async (newBooking: Booking) => {
-    if (!firebaseUser || !userProfile) {
+    const activeAuthUser = auth.currentUser || firebaseUser;
+    if (!activeAuthUser || !userProfile) {
       setPendingBooking(newBooking);
       setSelectedService(null);
       setActivePromotion(null);
@@ -1211,12 +1325,12 @@ export default function App() {
 
     if (isAccountBanned) return;
 
-    const scopedBooking: Booking = {
-      ...newBooking,
-      ownerUid: firebaseUser.uid,
-      userId: firebaseUser.uid,
-      assignedAgentIds: newBooking.assignedAgentIds || [],
-    };
+    const scopedBooking = buildScopedBookingPayload(
+      newBooking,
+      activeAuthUser.uid,
+      userProfile.displayName,
+      userProfile.phone
+    );
 
     setBookings((prev) => [scopedBooking, ...prev]);
     setSelectedService(null);
@@ -1224,22 +1338,11 @@ export default function App() {
     setActiveTab('mes_reservations');
 
     try {
+      await activeAuthUser.getIdToken();
       await setDoc(doc(db, 'bookings', scopedBooking.id), scopedBooking);
-      await publishNotification({
-        type: 'new_booking',
-        title: `Nouvelle commande #${scopedBooking.id}`,
-        body: `${scopedBooking.clientName} · ${scopedBooking.serviceName} à ${scopedBooking.commune} (${scopedBooking.clientOfferPrice.toLocaleString()} XAF)`,
-        targetRoles:
-          scopedBooking.assignedAgents.length > 0
-            ? ['manager', 'admin', 'agent']
-            : ['manager', 'admin'],
-        ...(scopedBooking.assignedAgents.length > 0
-          ? { targetAgentNames: scopedBooking.assignedAgents }
-          : {}),
-        relatedId: scopedBooking.id,
-        relatedTab: 'suivi_commande',
-      });
+      await publishNewBookingNotification(scopedBooking);
     } catch (error) {
+      setBookings((prev) => prev.filter((b) => b.id !== scopedBooking.id));
       handleFirestoreError(error, OperationType.CREATE, `bookings/${scopedBooking.id}`);
     }
   };
@@ -1267,16 +1370,85 @@ export default function App() {
     persistBookingPatch(bookingId, { status: 'confirmed' });
   };
 
-  const handleSubmitReview = (bookingId: string, rating: number, comment: string) => {
-    const nowLabel = new Date().toLocaleTimeString('fr-FR', {
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-    persistBookingPatch(bookingId, {
-      rating,
-      review: comment,
-      reviewSubmittedAt: `Aujourd'hui à ${nowLabel}`,
-    });
+  const handleSubmitReview = async (
+    bookingId: string,
+    rating: number,
+    comment: string
+  ): Promise<void> => {
+    const activeAuthUser = auth.currentUser || firebaseUser;
+    if (!activeAuthUser) {
+      throw new Error('Vous devez être connecté pour publier un commentaire.');
+    }
+    if (isAccountBanned) {
+      throw new Error('Votre compte est suspendu.');
+    }
+
+    const trimmedComment = comment.trim().slice(0, 800);
+    if (!trimmedComment) {
+      throw new Error('Veuillez saisir votre commentaire avant de le publier.');
+    }
+
+    const normalizedRating = Math.min(5, Math.max(1, Math.round(rating || 5)));
+    const nowIso = new Date().toISOString();
+    const patch: Partial<Booking> & { updatedAt: string } = {
+      rating: normalizedRating,
+      clientComment: trimmedComment,
+      clientCommentAt: nowIso,
+      review: trimmedComment,
+      reviewSubmittedAt: nowIso,
+      updatedAt: nowIso,
+    };
+
+    await activeAuthUser.getIdToken();
+
+    try {
+      await updateDoc(doc(db, 'bookings', bookingId), patch);
+      setBookings((prev) =>
+        prev.map((b) => (b.id === bookingId ? { ...b, ...patch } : b))
+      );
+    } catch (error) {
+      const code = (error as { code?: string })?.code || '';
+      const msg = error instanceof Error ? error.message : String(error || '');
+      if (
+        code === 'permission-denied' ||
+        msg.includes('permission-denied') ||
+        msg.includes('Missing or insufficient permissions')
+      ) {
+        // Fallback compatibilité si les nouvelles règles clientComment n'ont pas encore été publiées
+        try {
+          const legacyPatch: Partial<Booking> & { updatedAt: string } = {
+            rating: normalizedRating,
+            review: trimmedComment,
+            reviewSubmittedAt: nowIso,
+            updatedAt: nowIso,
+          };
+          await updateDoc(doc(db, 'bookings', bookingId), legacyPatch);
+          setBookings((prev) =>
+            prev.map((b) => (b.id === bookingId ? { ...b, ...patch } : b))
+          );
+          return;
+        } catch (fallbackErr) {
+          console.error('[handleSubmitReview] Firestore legacy updateDoc fallback failed:', {
+            bookingId,
+            clientUid: activeAuthUser.uid,
+            fallbackErr,
+          });
+        }
+      }
+      console.error('[handleSubmitReview] Firestore updateDoc failed:', {
+        bookingId,
+        clientUid: activeAuthUser.uid,
+        patchKeys: Object.keys(patch),
+        error,
+      });
+      throw new Error(
+        formatBookingUpdateError(
+          error,
+          "Impossible d'enregistrer votre commentaire dans Firestore.",
+          'Autorisation Firestore refusée pour enregistrer ce commentaire. Vérifiez que vous êtes bien le client propriétaire de la commande et que les règles firestore.rules à jour sont publiées dans Firebase.'
+        )
+      );
+    }
   };
 
   const handleToggleClientGps = (
@@ -1354,11 +1526,11 @@ export default function App() {
     }
 
     const assignedAgentIds = Array.from(
-      new Set([...candidateIds, ...matchedUsers.map((u) => u.uid)])
+      new Set([...candidateIds, ...matchedUsers.map((u) => u.uid)].map((id) => id.trim()).filter(Boolean))
     ).slice(0, 10);
 
     const assignedAgents = Array.from(
-      new Set([...matchedUsers.map((u) => u.displayName), ...candidateNames])
+      new Set([...matchedUsers.map((u) => u.displayName), ...candidateNames].map((n) => n.trim()).filter(Boolean))
     ).slice(0, 10);
 
     const assignedAgentDetails: AssignedAgentInfo[] = matchedUsers.slice(0, 10).map((u) => ({
@@ -1981,11 +2153,18 @@ export default function App() {
     });
   };
 
-  const formatBookingUpdateError = (error: unknown, fallback: string): string => {
+  const formatBookingUpdateError = (
+    error: unknown,
+    fallback: string,
+    permissionDeniedMessage?: string
+  ): string => {
     const code = (error as { code?: string })?.code || '';
     const msg = error instanceof Error ? error.message : String(error || '');
     if (code === 'permission-denied' || msg.includes('permission-denied') || msg.includes('Missing or insufficient permissions')) {
-      return "Autorisation Firestore refusée pour modifier cette commande. Vérifiez que votre compte agent actif est bien associé (assignedAgentIds) et que les règles firestore.rules à jour sont publiées dans Firebase.";
+      return (
+        permissionDeniedMessage ||
+        "Autorisation Firestore refusée pour modifier cette commande. Vérifiez que votre compte agent actif est bien associé (assignedAgentIds) et que les règles firestore.rules à jour sont publiées dans Firebase."
+      );
     }
     if (code === 'not-found' || msg.includes('No document to update')) {
       return 'Commande introuvable dans Firestore (elle a peut-être été supprimée).';
@@ -2081,10 +2260,13 @@ export default function App() {
   const handleStartPlacement = async (bookingId: string, beforePhotoUrl?: string) => {
     const { activeUid, booking: target } = await verifyAgentBookingContext(bookingId, 'démarrer');
     const nowIso = new Date().toISOString();
-    const existingBefore = target?.beforePhotos || [];
-    const hasNewBeforePhoto = Boolean(beforePhotoUrl && !existingBefore.includes(beforePhotoUrl));
-    const nextBefore = hasNewBeforePhoto && beforePhotoUrl
-      ? [...existingBefore, beforePhotoUrl].slice(-5)
+    const existingBefore = Array.isArray(target?.beforePhotos)
+      ? target.beforePhotos.filter((p): p is string => typeof p === 'string' && p.length > 0)
+      : [];
+    const cleanBeforeUrl = typeof beforePhotoUrl === 'string' ? beforePhotoUrl.trim() : '';
+    const hasNewBeforePhoto = Boolean(cleanBeforeUrl && !existingBefore.includes(cleanBeforeUrl));
+    const nextBefore = hasNewBeforePhoto
+      ? [...existingBefore, cleanBeforeUrl].slice(-5)
       : existingBefore;
 
     const patch: Partial<Booking> & { updatedAt: string } = {
@@ -2137,16 +2319,22 @@ export default function App() {
     }
 
     const nowIso = new Date().toISOString();
-    const existingBefore = target?.beforePhotos || [];
-    const hasNewBeforePhoto = Boolean(beforePhotoUrl && !existingBefore.includes(beforePhotoUrl));
-    const nextBefore = hasNewBeforePhoto && beforePhotoUrl
-      ? [...existingBefore, beforePhotoUrl].slice(-5)
+    const existingBefore = Array.isArray(target?.beforePhotos)
+      ? target.beforePhotos.filter((p): p is string => typeof p === 'string' && p.length > 0)
+      : [];
+    const cleanBeforeUrl = typeof beforePhotoUrl === 'string' ? beforePhotoUrl.trim() : '';
+    const hasNewBeforePhoto = Boolean(cleanBeforeUrl && !existingBefore.includes(cleanBeforeUrl));
+    const nextBefore = hasNewBeforePhoto
+      ? [...existingBefore, cleanBeforeUrl].slice(-5)
       : existingBefore;
 
-    const existingAfter = target?.afterPhotos || [];
-    const hasNewAfterPhoto = Boolean(afterPhotoUrl && !existingAfter.includes(afterPhotoUrl));
-    const nextAfter = hasNewAfterPhoto && afterPhotoUrl
-      ? [...existingAfter, afterPhotoUrl].slice(-5)
+    const existingAfter = Array.isArray(target?.afterPhotos)
+      ? target.afterPhotos.filter((p): p is string => typeof p === 'string' && p.length > 0)
+      : [];
+    const cleanAfterUrl = typeof afterPhotoUrl === 'string' ? afterPhotoUrl.trim() : '';
+    const hasNewAfterPhoto = Boolean(cleanAfterUrl && !existingAfter.includes(cleanAfterUrl));
+    const nextAfter = hasNewAfterPhoto
+      ? [...existingAfter, cleanAfterUrl].slice(-5)
       : existingAfter;
 
     const patch: Partial<Booking> & { updatedAt: string } = {
@@ -2213,7 +2401,8 @@ export default function App() {
           read: false,
         });
 
-        const clientOwnerUid = resolvedTarget.ownerUid || resolvedTarget.userId;
+        const clientOwnerUid =
+          resolvedTarget.ownerUid || resolvedTarget.userId || resolvedTarget.clientId;
         if (clientOwnerUid) {
           const thankYouMsg = `Merci pour votre confiance, ${resolvedTarget.clientName} ! Votre intervention « ${resolvedTarget.serviceName} » (#${bookingId}) est terminée. L'équipe Shine-x-Sanitize Alp Group vous remercie chaleureusement et espère vous revoir très bientôt.`;
           await publishNotification({
@@ -3260,7 +3449,10 @@ export default function App() {
             bookings={
               firebaseUser && userProfile
                 ? bookings.filter(
-                    (b) => b.ownerUid === firebaseUser.uid || b.userId === firebaseUser.uid
+                    (b) =>
+                      b.ownerUid === firebaseUser.uid ||
+                      b.userId === firebaseUser.uid ||
+                      b.clientId === firebaseUser.uid
                   )
                 : []
             }

@@ -115,6 +115,7 @@ export interface Booking {
   id: string;
   ownerUid: string;
   userId?: string;
+  clientId?: string;
   serviceId: string;
   serviceName: string;
   serviceCategory: ServiceItem['category'];
@@ -167,6 +168,8 @@ export interface Booking {
   rating?: number;
   review?: string;
   reviewSubmittedAt?: string;
+  clientComment?: string;
+  clientCommentAt?: string;
 }
 
 export type NotificationType =

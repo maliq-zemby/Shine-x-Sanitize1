@@ -4,10 +4,12 @@ import {
   Camera,
   CheckCircle2,
   EyeOff,
+  Loader2,
   LocateFixed,
   MapPin,
   MessageCircle,
   Navigation,
+  Pencil,
   Plus,
   Star,
   Tag,
@@ -28,7 +30,7 @@ interface ClientReservationsViewProps {
   isAuthenticated: boolean;
   onOpenAuth: () => void;
   onAcceptCounterOffer: (bookingId: string) => void;
-  onSubmitReview: (bookingId: string, rating: number, comment: string) => void;
+  onSubmitReview: (bookingId: string, rating: number, comment: string) => Promise<void> | void;
   onToggleClientGps: (bookingId: string, coords?: GpsPoint) => void;
   onDismissRefusalNotification?: (notifId: string) => void;
   onDismissNotification?: (notifId: string) => void;
@@ -94,6 +96,9 @@ export const ClientReservationsView: React.FC<ClientReservationsViewProps> = ({
   const [whatsappTarget, setWhatsappTarget] = useState<Booking | null>(null);
   const [reviewDrafts, setReviewDrafts] = useState<Record<string, { rating: number; text: string }>>({});
   const [openReviewId, setOpenReviewId] = useState<string | null>(null);
+  const [savingReviewId, setSavingReviewId] = useState<string | null>(null);
+  const [reviewSuccessNotice, setReviewSuccessNotice] = useState<Record<string, string>>({});
+  const [reviewErrorNotice, setReviewErrorNotice] = useState<Record<string, string>>({});
   const [gpsNotice, setGpsNotice] = useState<string>('');
 
   // Fermeture automatique de la carte GPS dès que la commande est refusée, purgée ou n'est plus active
@@ -114,11 +119,46 @@ export const ClientReservationsView: React.FC<ClientReservationsViewProps> = ({
     }
   }, [bookings, selectedGpsBookingId]);
 
-  const handleSaveReview = (bookingId: string) => {
-    const draft = reviewDrafts[bookingId] || { rating: 5, text: '' };
-    if (!draft.text.trim()) return;
-    onSubmitReview(bookingId, draft.rating || 5, draft.text.trim());
-    setOpenReviewId(null);
+  const handleSaveReview = async (booking: Booking) => {
+    const existingText = booking.clientComment || booking.review || '';
+    const draft = reviewDrafts[booking.id] || {
+      rating: booking.rating || 5,
+      text: existingText,
+    };
+    const trimmed = draft.text.trim();
+    if (!trimmed) {
+      setReviewErrorNotice((prev) => ({
+        ...prev,
+        [booking.id]: 'Veuillez saisir un commentaire avant de publier.',
+      }));
+      return;
+    }
+
+    setSavingReviewId(booking.id);
+    setReviewErrorNotice((prev) => ({ ...prev, [booking.id]: '' }));
+    setReviewSuccessNotice((prev) => ({ ...prev, [booking.id]: '' }));
+    try {
+      await onSubmitReview(booking.id, draft.rating || 5, trimmed);
+      setOpenReviewId(null);
+      setReviewSuccessNotice((prev) => ({
+        ...prev,
+        [booking.id]:
+          existingText
+            ? 'Votre commentaire modifié a bien été enregistré et transmis au gérant.'
+            : 'Merci ! Votre commentaire a bien été enregistré et transmis en temps réel au gérant.',
+      }));
+    } catch (error) {
+      console.error('[ClientReservationsView] Save comment failed:', { bookingId: booking.id, error });
+      setReviewErrorNotice((prev) => ({
+        ...prev,
+        [booking.id]:
+          error instanceof Error && error.message
+            ? error.message
+            : "Impossible d'enregistrer votre commentaire.",
+      }));
+    } finally {
+      setSavingReviewId(null);
+    }
   };
 
   const handleActivateClientGps = (booking: Booking) => {
@@ -342,11 +382,14 @@ export const ClientReservationsView: React.FC<ClientReservationsViewProps> = ({
           const isRefusedOrCancelled =
             booking.status === 'rejected' || booking.status === 'cancelled';
           const promoInfo = getBookingPromoInfo(booking);
+          const existingComment = (booking.clientComment || booking.review || '').trim();
+          const existingCommentAt = booking.clientCommentAt || booking.reviewSubmittedAt || '';
           const draft = reviewDrafts[booking.id] || {
             rating: booking.rating || 5,
-            text: booking.review || '',
+            text: existingComment,
           };
           const isEditingReview = openReviewId === booking.id;
+          const isSavingThisReview = savingReviewId === booking.id;
 
           return (
             <div
@@ -606,9 +649,31 @@ export const ClientReservationsView: React.FC<ClientReservationsViewProps> = ({
                 </div>
               )}
 
-              {booking.review && !isEditingReview && (
-                <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-4 space-y-1">
-                  <div className="flex items-center justify-between">
+              {reviewSuccessNotice[booking.id] && (
+                <div
+                  role="status"
+                  className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 text-xs text-emerald-900 font-medium flex items-center justify-between gap-2"
+                >
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+                    <span>{reviewSuccessNotice[booking.id]}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setReviewSuccessNotice((prev) => ({ ...prev, [booking.id]: '' }))
+                    }
+                    aria-label="Fermer la confirmation"
+                    className="text-emerald-700 hover:text-emerald-900 p-0.5"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+
+              {existingComment && !isEditingReview && (
+                <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-4 space-y-1.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-1">
                       {[1, 2, 3, 4, 5].map((star) => (
                         <Star
@@ -624,23 +689,54 @@ export const ClientReservationsView: React.FC<ClientReservationsViewProps> = ({
                         Votre commentaire
                       </span>
                     </div>
-                    <span className="text-[11px] text-slate-500">{booking.reviewSubmittedAt}</span>
+                    <div className="flex items-center gap-2.5">
+                      {existingCommentAt && (
+                        <span className="text-[11px] text-slate-500">
+                          {formatBookingTimestamp(existingCommentAt)}
+                        </span>
+                      )}
+                      {!isRefusedOrCancelled && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setReviewErrorNotice((prev) => ({ ...prev, [booking.id]: '' }));
+                            setReviewDrafts((prev) => ({
+                              ...prev,
+                              [booking.id]: {
+                                rating: booking.rating || 5,
+                                text: existingComment,
+                              },
+                            }));
+                            setOpenReviewId(booking.id);
+                          }}
+                          className="text-[11px] font-semibold text-emerald-800 hover:text-emerald-950 inline-flex items-center gap-1"
+                        >
+                          <Pencil className="w-3 h-3" />
+                          <span>Modifier</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  <p className="text-xs text-slate-700 leading-relaxed">{booking.review}</p>
+                  <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap break-words">
+                    {existingComment}
+                  </p>
                 </div>
               )}
 
               {isEditingReview && (
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="text-xs font-bold text-slate-900">
-                      Laisser un commentaire sur la prestation
+                      {existingComment
+                        ? 'Modifier votre commentaire sur la commande'
+                        : 'Laisser un commentaire sur la prestation'}
                     </span>
                     <div className="flex items-center gap-1">
                       {[1, 2, 3, 4, 5].map((star) => (
                         <button
                           key={star}
                           type="button"
+                          disabled={isSavingThisReview}
                           onClick={() =>
                             setReviewDrafts((prev) => ({
                               ...prev,
@@ -664,31 +760,58 @@ export const ClientReservationsView: React.FC<ClientReservationsViewProps> = ({
 
                   <textarea
                     rows={3}
+                    maxLength={800}
+                    disabled={isSavingThisReview}
                     value={draft.text}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      setReviewErrorNotice((prev) => ({ ...prev, [booking.id]: '' }));
                       setReviewDrafts((prev) => ({
                         ...prev,
                         [booking.id]: { ...draft, text: e.target.value },
-                      }))
-                    }
+                      }));
+                    }}
                     placeholder="Partagez votre avis sur la ponctualité, la qualité du nettoyage ou le comportement de l'agent..."
-                    className="w-full bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-700"
+                    className="w-full bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-700 disabled:opacity-60"
                   />
+
+                  <div className="flex items-center justify-between text-[11px] text-slate-500">
+                    <span>Visible en temps réel par le gérant dans Suivi et Commande</span>
+                    <span className="tabular-nums">{draft.text.length}/800</span>
+                  </div>
+
+                  {reviewErrorNotice[booking.id] && (
+                    <div
+                      role="alert"
+                      className="bg-rose-50 border border-rose-200 rounded-xl px-3 py-2 text-xs text-rose-800 flex items-start gap-2"
+                    >
+                      <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                      <span>{reviewErrorNotice[booking.id]}</span>
+                    </div>
+                  )}
 
                   <div className="flex items-center justify-end gap-2">
                     <button
                       type="button"
+                      disabled={isSavingThisReview}
                       onClick={() => setOpenReviewId(null)}
-                      className="px-3.5 py-2 min-h-[40px] text-xs font-semibold text-slate-600 hover:text-slate-900"
+                      className="px-3.5 py-2 min-h-[40px] text-xs font-semibold text-slate-600 hover:text-slate-900 disabled:opacity-50"
                     >
                       Annuler
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleSaveReview(booking.id)}
-                      className="px-4 py-2 min-h-[40px] bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-xl transition-colors"
+                      disabled={isSavingThisReview}
+                      onClick={() => handleSaveReview(booking)}
+                      className="px-4 py-2 min-h-[40px] bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-1.5"
                     >
-                      Publier le commentaire
+                      {isSavingThisReview && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                      <span>
+                        {isSavingThisReview
+                          ? 'Enregistrement...'
+                          : existingComment
+                          ? 'Enregistrer la modification'
+                          : 'Publier le commentaire'}
+                      </span>
                     </button>
                   </div>
                 </div>
@@ -742,14 +865,30 @@ export const ClientReservationsView: React.FC<ClientReservationsViewProps> = ({
                   <span>WhatsApp Gérant</span>
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() => setOpenReviewId(isEditingReview ? null : booking.id)}
-                  className="px-4 py-2.5 min-h-[44px] bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-2"
-                >
-                  <Star className="w-3.5 h-3.5" />
-                  <span>{booking.review ? 'Modifier mon commentaire' : 'Laisser un commentaire'}</span>
-                </button>
+                {!isRefusedOrCancelled && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReviewErrorNotice((prev) => ({ ...prev, [booking.id]: '' }));
+                      if (!isEditingReview) {
+                        setReviewDrafts((prev) => ({
+                          ...prev,
+                          [booking.id]: {
+                            rating: booking.rating || 5,
+                            text: existingComment,
+                          },
+                        }));
+                      }
+                      setOpenReviewId(isEditingReview ? null : booking.id);
+                    }}
+                    className="px-4 py-2.5 min-h-[44px] bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-2"
+                  >
+                    <Star className="w-3.5 h-3.5" />
+                    <span>
+                      {existingComment ? 'Modifier mon commentaire' : 'Laisser un commentaire'}
+                    </span>
+                  </button>
+                )}
               </div>
             </div>
           );
