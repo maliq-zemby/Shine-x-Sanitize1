@@ -142,6 +142,8 @@
         "title": { "type": "string", "minLength": 2, "maxLength": 140 },
         "body": { "type": "string", "minLength": 2, "maxLength": 400 },
         "message": { "type": "string", "minLength": 2, "maxLength": 400 },
+        "targetRoles": { "type": "array", "description": "Rôles destinataires de la notification" },
+        "targetAgentNames": { "type": "array", "description": "Noms des agents ciblés" },
         "targetOwnerUid": { "type": "string", "maxLength": 128 },
         "recipientId": { "type": "string", "maxLength": 128 },
         "orderId": { "type": "string", "maxLength": 128 },

@@ -152,9 +152,10 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
   const agentMissions = bookings.filter((b) => {
     if (!VALIDATED_MISSION_STATUSES.has(b.status)) return false;
     if (isAdminPreview) return true;
-    const matchesUid = agentUid ? (b.assignedAgentIds || []).includes(agentUid) : false;
-    const matchesName = b.assignedAgents.includes(agentName);
-    return matchesUid || matchesName;
+    if (agentUid) {
+      return (b.assignedAgentIds || []).includes(agentUid);
+    }
+    return b.assignedAgents.includes(agentName);
   });
 
   const [selectedMissionId, setSelectedMissionId] = useState<string | null>(
@@ -434,6 +435,18 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
         chosenAfter,
         beforeDrafts[booking.id] || chosenBefore
       );
+      setBeforeDrafts((prev) => {
+        if (!(booking.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[booking.id];
+        return next;
+      });
+      setAfterDrafts((prev) => {
+        if (!(booking.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[booking.id];
+        return next;
+      });
       setActionSuccess((prev) => ({
         ...prev,
         [booking.id]: 'Fin de mission enregistrée et synchronisée en temps réel.',
@@ -549,13 +562,24 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
                 <div
                   key={alert.id}
                   className={`px-4 sm:px-5 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors ${
-                    unread ? 'bg-emerald-50/50' : 'bg-white'
+                    alert.type === 'agent_encouragement'
+                      ? unread
+                        ? 'bg-amber-50/70'
+                        : 'bg-emerald-50/25'
+                      : unread
+                      ? 'bg-emerald-50/50'
+                      : 'bg-white'
                   }`}
                 >
                   <div className="space-y-1 min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       {alert.type === 'agent_encouragement' && (
-                        <Award className="w-4 h-4 text-emerald-700 shrink-0" />
+                        <>
+                          <Award className="w-4 h-4 text-amber-600 shrink-0" />
+                          <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 text-[10px] font-bold">
+                            Encouragement du gérant
+                          </span>
+                        </>
                       )}
                       {unread && alert.type !== 'agent_encouragement' && (
                         <span className="w-2 h-2 rounded-full bg-rose-600 shrink-0" />

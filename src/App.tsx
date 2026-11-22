@@ -780,7 +780,7 @@ export default function App() {
               ) {
                 setLiveToast(added);
                 showBrowserPushNotification(added);
-                if (added.type === 'agent_assigned') {
+                if (added.type === 'agent_assigned' || added.type === 'agent_encouragement') {
                   playAssignmentAlertChime();
                 }
               }
@@ -1334,7 +1334,10 @@ export default function App() {
     });
 
     candidateNames.forEach((name) => {
-      const found = activeAgentsList.find((u) => u.displayName === name);
+      const normalized = name.trim().toLowerCase();
+      const found =
+        activeAgentsList.find((u) => u.displayName === name) ||
+        activeAgentsList.find((u) => u.displayName.trim().toLowerCase() === normalized);
       if (found && !seenUids.has(found.uid)) {
         seenUids.add(found.uid);
         matchedUsers.push(found);
@@ -1429,17 +1432,47 @@ export default function App() {
     selectedAgentIds?: string[],
     selectedAgentNames?: string[]
   ) => {
+    const activeAuthUser = auth.currentUser || firebaseUser;
+    if (activeAuthUser) {
+      await activeAuthUser.getIdToken();
+    }
     const target = bookings.find((b) => b.id === bookingId);
     const { assignedAgentIds, assignedAgents, assignedAgentDetails } =
       resolveSelectedAgentsData(bookingId, target, selectedAgentIds, selectedAgentNames);
 
-    await persistBookingPatch(bookingId, {
+    const updatedAt = new Date().toISOString();
+    const patch: Partial<Booking> & { updatedAt: string } = {
       status: 'confirmed',
       assignedAgents,
       assignedAgentIds,
       assignedAgentDetails,
       ...(target ? { finalPrice: target.finalPrice } : {}),
-    });
+      updatedAt,
+    };
+
+    if (activeAuthUser && !isAccountBanned) {
+      try {
+        await updateDoc(doc(db, 'bookings', bookingId), patch);
+      } catch (error) {
+        console.error('[handleValidateOrder] Firestore updateDoc failed:', {
+          bookingId,
+          uid: activeAuthUser.uid,
+          role: userProfile?.role,
+          patchKeys: Object.keys(patch),
+          error,
+        });
+        throw new Error(
+          formatBookingUpdateError(
+            error,
+            'Impossible de valider cette commande dans Firestore.'
+          )
+        );
+      }
+    }
+
+    setBookings((prev) =>
+      prev.map((b) => (b.id === bookingId ? { ...b, ...patch } : b))
+    );
 
     if (target && (assignedAgentIds.length > 0 || assignedAgents.length > 0)) {
       await notifyAssignedAgents(
@@ -1459,18 +1492,28 @@ export default function App() {
     const refusedAt = new Date().toISOString();
     const clientUid = target?.userId || target?.ownerUid || '';
 
-    await persistBookingPatch(bookingId, {
-      status: 'rejected',
-      gpsActive: false,
-      clientGpsActive: false,
-      assignedAgents: [],
-      assignedAgentIds: [],
-      assignedAgentDetails: [],
-      rejectionReason: trimmedReason,
-      refusalReason: trimmedReason,
-      refusedAt,
-      ...(clientUid ? { userId: clientUid } : {}),
-    });
+    try {
+      await persistBookingPatch(bookingId, {
+        status: 'rejected',
+        gpsActive: false,
+        clientGpsActive: false,
+        assignedAgents: [],
+        assignedAgentIds: [],
+        assignedAgentDetails: [],
+        rejectionReason: trimmedReason,
+        refusalReason: trimmedReason,
+        refusedAt,
+        ...(clientUid ? { userId: clientUid } : {}),
+      });
+    } catch (error) {
+      if (target) {
+        setBookings((prev) => prev.map((b) => (b.id === bookingId ? target : b)));
+      }
+      console.error('[handleRefuseOrder] Firestore updateDoc failed:', { bookingId, error });
+      throw new Error(
+        formatBookingUpdateError(error, 'Impossible de refuser cette commande dans Firestore.')
+      );
+    }
 
     if (clientUid) {
       const refusalMessage = `Votre commande #${bookingId} (${target?.serviceName || 'Prestation'}) a été refusée. Motif : ${trimmedReason}`;
@@ -1491,13 +1534,33 @@ export default function App() {
   };
 
   const handleDeleteOrder = async (bookingId: string) => {
+    const activeAuthUser = auth.currentUser || firebaseUser;
+    if (!activeAuthUser) {
+      throw new Error('Vous devez être connecté pour supprimer une commande.');
+    }
+    if (isAccountBanned) {
+      throw new Error('Votre compte est suspendu.');
+    }
+
+    await activeAuthUser.getIdToken();
+    const snapshotTarget = bookings.find((b) => b.id === bookingId);
     setBookings((prev) => prev.filter((b) => b.id !== bookingId));
-    if (firebaseUser && !isAccountBanned) {
-      try {
-        await deleteDoc(doc(db, 'bookings', bookingId));
-      } catch (error) {
-        handleFirestoreError(error, OperationType.DELETE, `bookings/${bookingId}`);
+
+    try {
+      await deleteDoc(doc(db, 'bookings', bookingId));
+    } catch (error) {
+      if (snapshotTarget) {
+        setBookings((prev) =>
+          prev.some((b) => b.id === bookingId) ? prev : [snapshotTarget, ...prev]
+        );
       }
+      console.error('[handleDeleteOrder] Firestore deleteDoc failed:', { bookingId, error });
+      throw new Error(
+        formatBookingUpdateError(
+          error,
+          'Impossible de supprimer cette commande dans Firestore.'
+        )
+      );
     }
   };
 
@@ -1515,17 +1578,54 @@ export default function App() {
     agents: string[],
     agentIds?: string[]
   ) => {
+    const activeAuthUser = auth.currentUser || firebaseUser;
+    if (!activeAuthUser) {
+      throw new Error('Vous devez être connecté pour affecter des agents.');
+    }
+    if (isAccountBanned) {
+      throw new Error('Votre compte est suspendu.');
+    }
+
+    await activeAuthUser.getIdToken();
+
     const target = bookings.find((b) => b.id === bookingId);
     const previousAgentIds = new Set(target?.assignedAgentIds || []);
     const { assignedAgentIds, assignedAgents, assignedAgentDetails } =
       resolveSelectedAgentsData(bookingId, undefined, agentIds, agents);
 
-    await persistBookingPatch(bookingId, {
+    const updatedAt = new Date().toISOString();
+    const patch: Partial<Booking> & { updatedAt: string } = {
       assignedAgents,
       assignedAgentIds,
       assignedAgentDetails,
       agentGps: target?.agentGps || DEFAULT_GPS_POSITION,
-    });
+      updatedAt,
+    };
+
+    try {
+      const ref = doc(db, 'bookings', bookingId);
+      const snap = await getDoc(ref);
+      if (snap.exists()) {
+        await updateDoc(ref, patch);
+      }
+      setBookings((prev) =>
+        prev.map((b) => (b.id === bookingId ? { ...b, ...patch } : b))
+      );
+    } catch (error) {
+      console.error('[handleAssignAgents] Firestore updateDoc failed:', {
+        bookingId,
+        uid: activeAuthUser.uid,
+        role: userProfile?.role,
+        patchKeys: Object.keys(patch),
+        error,
+      });
+      throw new Error(
+        formatBookingUpdateError(
+          error,
+          "Impossible d'enregistrer l'affectation des agents dans Firestore."
+        )
+      );
+    }
 
     const isAlreadyValidated = Boolean(
       target && ['confirmed', 'in_transit', 'in_progress'].includes(target.status)
@@ -1885,7 +1985,7 @@ export default function App() {
     const code = (error as { code?: string })?.code || '';
     const msg = error instanceof Error ? error.message : String(error || '');
     if (code === 'permission-denied' || msg.includes('permission-denied') || msg.includes('Missing or insufficient permissions')) {
-      return "Autorisation Firestore refusée pour modifier cette commande. Vérifiez que votre compte agent actif est bien affecté à la commande et que les règles Firestore sont à jour.";
+      return "Autorisation Firestore refusée pour modifier cette commande. Vérifiez que votre compte agent actif est bien associé (assignedAgentIds) et que les règles firestore.rules à jour sont publiées dans Firebase.";
     }
     if (code === 'not-found' || msg.includes('No document to update')) {
       return 'Commande introuvable dans Firestore (elle a peut-être été supprimée).';
@@ -1896,19 +1996,90 @@ export default function App() {
     return fallback;
   };
 
-  const handleStartPlacement = async (bookingId: string, beforePhotoUrl?: string) => {
-    if (!firebaseUser) {
-      const authErr = new Error('Vous devez être connecté pour démarrer une intervention.');
-      console.error('[handleStartPlacement] Missing firebaseUser', { bookingId });
+  const verifyAgentBookingContext = async (
+    bookingId: string,
+    actionLabel: 'démarrer' | 'clôturer'
+  ): Promise<{ activeUid: string; booking: Booking | undefined; alreadyCompleted: boolean }> => {
+    const activeAuthUser = auth.currentUser || firebaseUser;
+    if (!activeAuthUser) {
+      const authErr = new Error(`Vous devez être connecté pour ${actionLabel} une intervention.`);
+      console.error('[verifyAgentBookingContext] Missing authenticated user', { bookingId });
       throw authErr;
     }
+
+    await activeAuthUser.getIdToken();
+
     if (isAccountBanned) {
       const banErr = new Error('Votre compte est suspendu.');
-      console.error('[handleStartPlacement] Banned user attempted start', { bookingId, uid: firebaseUser.uid });
+      console.error('[verifyAgentBookingContext] Banned user attempted mutation', {
+        bookingId,
+        uid: activeAuthUser.uid,
+      });
       throw banErr;
     }
 
-    const target = bookings.find((b) => b.id === bookingId);
+    if (!isActualAdmin) {
+      if (!userProfile || verifiedRoleUid !== activeAuthUser.uid || userProfile.role !== 'agent') {
+        throw new Error(
+          "Votre session agent n'est pas encore vérifiée. Reconnectez-vous puis réessayez."
+        );
+      }
+      if (userProfile.accountStatus && userProfile.accountStatus !== 'active') {
+        throw new Error(
+          `Votre compte agent n'est pas actif (statut : ${userProfile.accountStatus}).`
+        );
+      }
+    }
+
+    let resolvedBooking = bookings.find((b) => b.id === bookingId);
+    try {
+      const snap = await getDoc(doc(db, 'bookings', bookingId));
+      if (snap.exists()) {
+        resolvedBooking = snap.data() as Booking;
+      } else if (!resolvedBooking) {
+        throw new Error('Commande introuvable dans Firestore (elle a peut-être été supprimée).');
+      }
+    } catch (readErr) {
+      if (!resolvedBooking) {
+        throw new Error(
+          formatBookingUpdateError(
+            readErr,
+            "Impossible de vérifier l'association de votre compte agent à cette commande."
+          )
+        );
+      }
+    }
+
+    if (resolvedBooking) {
+      if (
+        !isActualAdmin &&
+        (!Array.isArray(resolvedBooking.assignedAgentIds) ||
+          !resolvedBooking.assignedAgentIds.includes(activeAuthUser.uid))
+      ) {
+        throw new Error(
+          "Votre compte agent n'est pas associé à cette commande dans Firestore (assignedAgentIds). Demandez au gérant de vous réaffecter."
+        );
+      }
+
+      if (actionLabel === 'clôturer' && resolvedBooking.status === 'completed') {
+        return { activeUid: activeAuthUser.uid, booking: resolvedBooking, alreadyCompleted: true };
+      }
+
+      if (
+        !isActualAdmin &&
+        !['confirmed', 'in_transit', 'in_progress'].includes(resolvedBooking.status)
+      ) {
+        throw new Error(
+          `Cette commande ne peut pas être modifiée dans son statut actuel (${resolvedBooking.status}).`
+        );
+      }
+    }
+
+    return { activeUid: activeAuthUser.uid, booking: resolvedBooking, alreadyCompleted: false };
+  };
+
+  const handleStartPlacement = async (bookingId: string, beforePhotoUrl?: string) => {
+    const { activeUid, booking: target } = await verifyAgentBookingContext(bookingId, 'démarrer');
     const nowIso = new Date().toISOString();
     const existingBefore = target?.beforePhotos || [];
     const hasNewBeforePhoto = Boolean(beforePhotoUrl && !existingBefore.includes(beforePhotoUrl));
@@ -1931,8 +2102,10 @@ export default function App() {
     } catch (error) {
       console.error('[handleStartPlacement] Firestore updateDoc failed:', {
         bookingId,
-        agentUid: firebaseUser.uid,
+        agentUid: activeUid,
         role: userProfile?.role,
+        assignedAgentIds: target?.assignedAgentIds,
+        bookingStatus: target?.status,
         patchKeys: Object.keys(patch),
         error,
       });
@@ -1950,18 +2123,19 @@ export default function App() {
     afterPhotoUrl?: string,
     beforePhotoUrl?: string
   ) => {
-    if (!firebaseUser) {
-      const authErr = new Error('Vous devez être connecté pour clôturer une intervention.');
-      console.error('[handleFinishPlacement] Missing firebaseUser', { bookingId });
-      throw authErr;
-    }
-    if (isAccountBanned) {
-      const banErr = new Error('Votre compte est suspendu.');
-      console.error('[handleFinishPlacement] Banned user attempted finish', { bookingId, uid: firebaseUser.uid });
-      throw banErr;
+    const {
+      activeUid,
+      booking: target,
+      alreadyCompleted,
+    } = await verifyAgentBookingContext(bookingId, 'clôturer');
+
+    if (alreadyCompleted && target) {
+      setBookings((prev) =>
+        prev.map((b) => (b.id === bookingId ? { ...b, ...target } : b))
+      );
+      return;
     }
 
-    const target = bookings.find((b) => b.id === bookingId);
     const nowIso = new Date().toISOString();
     const existingBefore = target?.beforePhotos || [];
     const hasNewBeforePhoto = Boolean(beforePhotoUrl && !existingBefore.includes(beforePhotoUrl));
@@ -1978,6 +2152,7 @@ export default function App() {
     const patch: Partial<Booking> & { updatedAt: string } = {
       status: 'completed',
       gpsActive: false,
+      ...(!target?.startedAt ? { startedAt: nowIso } : {}),
       completedAt: nowIso,
       updatedAt: nowIso,
       ...(hasNewBeforePhoto ? { beforePhotos: nextBefore } : {}),
@@ -1992,8 +2167,10 @@ export default function App() {
     } catch (error) {
       console.error('[handleFinishPlacement] Firestore updateDoc failed:', {
         bookingId,
-        agentUid: firebaseUser.uid,
+        agentUid: activeUid,
         role: userProfile?.role,
+        assignedAgentIds: target?.assignedAgentIds,
+        bookingStatus: target?.status,
         patchKeys: Object.keys(patch),
         error,
       });
@@ -2063,12 +2240,15 @@ export default function App() {
   };
 
   const handleCongratulateAgents = async (bookingId: string) => {
-    if (!firebaseUser) {
+    const activeAuthUser = auth.currentUser || firebaseUser;
+    if (!activeAuthUser) {
       throw new Error('Vous devez être connecté pour féliciter les agents.');
     }
     if (isAccountBanned) {
       throw new Error('Votre compte est suspendu.');
     }
+
+    await activeAuthUser.getIdToken();
 
     let target = bookings.find((b) => b.id === bookingId);
     if (!target) {
@@ -2091,48 +2271,23 @@ export default function App() {
         : userProfile?.displayName || 'Le gérant'
     ).slice(0, 120);
 
-    try {
-      await updateDoc(doc(db, 'bookings', bookingId), {
-        agentsCongratulatedAt: nowIso,
-        agentsCongratulatedBy: managerLabel,
-        updatedAt: nowIso,
-      });
-      setBookings((prev) =>
-        prev.map((b) =>
-          b.id === bookingId
-            ? {
-                ...b,
-                agentsCongratulatedAt: nowIso,
-                agentsCongratulatedBy: managerLabel,
-                updatedAt: nowIso,
-              }
-            : b
-        )
-      );
-    } catch (error) {
-      console.error('[handleCongratulateAgents] Failed to mark booking congratulated:', {
-        bookingId,
-        managerUid: firebaseUser.uid,
-        error,
-      });
-      throw new Error(
-        formatBookingUpdateError(
-          error,
-          "Impossible d'enregistrer les félicitations sur la commande dans Firestore."
-        )
-      );
-    }
-
     const agentIds = Array.from(
       new Set([
         ...(target.assignedAgentIds || []).filter(Boolean),
         ...target.assignedAgents
-          .map((name) => users.find((u) => u.displayName === name && u.role === 'agent')?.uid)
+          .map((name) => {
+            const normalized = name.trim().toLowerCase();
+            return users.find(
+              (u) =>
+                u.role === 'agent' &&
+                (u.displayName === name || u.displayName.trim().toLowerCase() === normalized)
+            )?.uid;
+          })
           .filter((uid): uid is string => Boolean(uid)),
       ])
     );
     const agentNames = target.assignedAgents.length > 0 ? target.assignedAgents : undefined;
-    const congratsMessage = `Félicitations de la part de ${managerLabel} pour l'accomplissement de la commande #${bookingId} (${target.serviceName} · client ${target.clientName}) ! Merci pour votre professionnalisme.`;
+    const congratsMessage = `Félicitations de la part de ${managerLabel} pour l'accomplissement de la commande #${bookingId} (${target.serviceName} · client ${target.clientName}) ! Merci pour votre professionnalisme et votre engagement.`;
 
     try {
       if (agentIds.length > 0) {
@@ -2181,7 +2336,39 @@ export default function App() {
         error,
       });
       throw new Error(
-        "La commande a été marquée mais l'envoi de la notification Firestore aux agents a échoué. Vérifiez les règles Firestore."
+        "L'envoi de la notification d'encouragement dans Firestore a échoué. Vérifiez les règles Firestore et réessayez."
+      );
+    }
+
+    try {
+      await updateDoc(doc(db, 'bookings', bookingId), {
+        agentsCongratulatedAt: nowIso,
+        agentsCongratulatedBy: managerLabel,
+        updatedAt: nowIso,
+      });
+      setBookings((prev) =>
+        prev.map((b) =>
+          b.id === bookingId
+            ? {
+                ...b,
+                agentsCongratulatedAt: nowIso,
+                agentsCongratulatedBy: managerLabel,
+                updatedAt: nowIso,
+              }
+            : b
+        )
+      );
+    } catch (error) {
+      console.error('[handleCongratulateAgents] Failed to mark booking congratulated:', {
+        bookingId,
+        managerUid: activeAuthUser.uid,
+        error,
+      });
+      throw new Error(
+        formatBookingUpdateError(
+          error,
+          "La notification a été envoyée, mais l'horodatage de confirmation sur la commande a échoué."
+        )
       );
     }
   };

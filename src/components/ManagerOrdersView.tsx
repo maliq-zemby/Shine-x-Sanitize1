@@ -104,11 +104,11 @@ interface ManagerOrdersViewProps {
     selectedAgentNames?: string[]
   ) => Promise<void> | void;
   onRefuseOrder: (bookingId: string, reason: string) => void;
-  onDeleteOrder: (bookingId: string) => void;
+  onDeleteOrder: (bookingId: string) => Promise<void> | void;
   onCongratulateAgents?: (bookingId: string) => Promise<void> | void;
   onArchivePhotos: (bookingId: string) => void;
   onUpdatePrice: (bookingId: string, newPrice: number, note: string) => void;
-  onAssignAgents: (bookingId: string, agents: string[], agentIds?: string[]) => void;
+  onAssignAgents: (bookingId: string, agents: string[], agentIds?: string[]) => Promise<void> | void;
   onUpdateServiceBasePrice: (serviceId: string, newBasePrice: number) => void;
   onCreatePromotion: (
     promo: Omit<Promotion, 'id' | 'status' | 'createdAt' | 'createdByUid'>
@@ -174,10 +174,33 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
     'Commande refusée par le gérant : créneau ou tarif non disponible.'
   );
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<Record<string, string>>({});
   const [congratulatingId, setCongratulatingId] = useState<string | null>(null);
   const [congratulateError, setCongratulateError] = useState<Record<string, string>>({});
   const [congratulateSuccess, setCongratulateSuccess] = useState<Record<string, string>>({});
   const [whatsappClientBooking, setWhatsappClientBooking] = useState<Booking | null>(null);
+
+  const handleConfirmDeleteBooking = async (bookingId: string) => {
+    if (deletingId) return;
+    setDeletingId(bookingId);
+    setDeleteError((prev) => ({ ...prev, [bookingId]: '' }));
+    try {
+      await onDeleteOrder(bookingId);
+      setConfirmDeleteId(null);
+    } catch (error) {
+      console.error('[ManagerOrdersView] Delete booking failed:', { bookingId, error });
+      setDeleteError((prev) => ({
+        ...prev,
+        [bookingId]:
+          error instanceof Error && error.message
+            ? error.message
+            : 'Impossible de supprimer cette commande dans Firestore.',
+      }));
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   const handleCongratulateClick = async (bookingId: string) => {
     if (!onCongratulateAgents || congratulatingId) return;
@@ -187,7 +210,7 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
       await onCongratulateAgents(bookingId);
       setCongratulateSuccess((prev) => ({
         ...prev,
-        [bookingId]: 'Félicitations envoyées en temps réel aux agents affectés.',
+        [bookingId]: 'Message d’encouragement et félicitations envoyés en temps réel.',
       }));
     } catch (error) {
       console.error('[ManagerOrdersView] Congratulate agents failed:', { bookingId, error });
@@ -264,13 +287,16 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
   const resolveAgentIdsForNames = (names: string[]): string[] => {
     const ids = new Set<string>();
     names.forEach((name) => {
-      const match = registeredAgents.find((a) => a.displayName === name);
+      const normalized = name.trim().toLowerCase();
+      const match =
+        registeredAgents.find((a) => a.displayName === name) ||
+        registeredAgents.find((a) => a.displayName.trim().toLowerCase() === normalized);
       if (match) ids.add(match.uid);
     });
     return Array.from(ids);
   };
 
-  const toggleAgentForBooking = (booking: Booking, agentName: string, agentUid?: string) => {
+  const toggleAgentForBooking = async (booking: Booking, agentName: string, agentUid?: string) => {
     const existsByName = booking.assignedAgents.includes(agentName);
     const existsById = agentUid ? (booking.assignedAgentIds || []).includes(agentUid) : false;
     const exists = existsByName || existsById;
@@ -300,15 +326,31 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
       booking.assignedAgentIds && booking.assignedAgentIds.length > 0
         ? booking.assignedAgentIds
         : resolveAgentIdsForNames(booking.assignedAgents);
+    const normalizedAgentName = agentName.trim().toLowerCase();
     const resolvedUid =
-      agentUid || registeredAgents.find((a) => a.displayName === agentName)?.uid;
+      agentUid ||
+      registeredAgents.find(
+        (a) =>
+          a.displayName === agentName ||
+          a.displayName.trim().toLowerCase() === normalizedAgentName
+      )?.uid;
     const nextIds = resolvedUid
       ? exists
         ? currentIds.filter((id) => id !== resolvedUid)
         : Array.from(new Set([...currentIds, resolvedUid]))
       : currentIds;
 
-    onAssignAgents(booking.id, nextNames, nextIds);
+    try {
+      await onAssignAgents(booking.id, nextNames, nextIds);
+    } catch (error) {
+      setAssignError((prev) => ({
+        ...prev,
+        [booking.id]:
+          error instanceof Error && error.message
+            ? error.message
+            : "Impossible d'enregistrer l'affectation dans Firestore.",
+      }));
+    }
   };
 
   const openValidationPanel = (booking: Booking) => {
@@ -376,8 +418,11 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
       ids: booking.assignedAgentIds || resolveAgentIdsForNames(booking.assignedAgents),
       names: booking.assignedAgents,
     };
+    const mergedIds = Array.from(
+      new Set([...draft.ids, ...resolveAgentIdsForNames(draft.names)])
+    );
 
-    if (registeredAgents.length > 0 && draft.ids.length === 0 && draft.names.length === 0) {
+    if (registeredAgents.length > 0 && mergedIds.length === 0 && draft.names.length === 0) {
       setValidationError((prev) => ({
         ...prev,
         [booking.id]:
@@ -388,8 +433,16 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
 
     setValidatingBusyId(booking.id);
     try {
-      await onValidateOrder(booking.id, draft.ids, draft.names);
+      await onValidateOrder(booking.id, mergedIds, draft.names);
       setValidatingBookingId(null);
+    } catch (error) {
+      setValidationError((prev) => ({
+        ...prev,
+        [booking.id]:
+          error instanceof Error && error.message
+            ? error.message
+            : 'Impossible de valider cette commande dans Firestore.',
+      }));
     } finally {
       setValidatingBusyId(null);
     }
@@ -999,36 +1052,49 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
 
                       {onCongratulateAgents &&
                         ((booking.assignedAgentIds && booking.assignedAgentIds.length > 0) ||
-                          booking.assignedAgents.length > 0) && (
-                          <div className="flex flex-wrap items-center gap-2.5 pt-1">
-                            <button
-                              type="button"
-                              disabled={
-                                Boolean(booking.agentsCongratulatedAt) ||
-                                congratulatingId === booking.id
-                              }
-                              onClick={() => handleCongratulateClick(booking.id)}
-                              className="px-4 py-2.5 min-h-[44px] bg-emerald-700 hover:bg-emerald-800 disabled:bg-emerald-100 disabled:text-emerald-800 text-white text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-1.5"
-                            >
-                              {congratulatingId === booking.id ? (
-                                <>
-                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                  <span>Envoi des félicitations...</span>
-                                </>
-                              ) : booking.agentsCongratulatedAt ? (
-                                <>
-                                  <CheckCircle2 className="w-3.5 h-3.5" />
-                                  <span>Agents félicités</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Award className="w-3.5 h-3.5" />
-                                  <span>Féliciter les agents</span>
-                                </>
-                              )}
-                            </button>
-                          </div>
-                        )}
+                          booking.assignedAgents.length > 0) && (() => {
+                          const agentCount = Math.max(
+                            booking.assignedAgentIds?.length || 0,
+                            booking.assignedAgents.length
+                          );
+                          const isSingleAgent = agentCount === 1;
+                          return (
+                            <div className="flex flex-wrap items-center gap-2.5 pt-1">
+                              <button
+                                type="button"
+                                disabled={
+                                  Boolean(booking.agentsCongratulatedAt) ||
+                                  congratulatingId === booking.id
+                                }
+                                onClick={() => handleCongratulateClick(booking.id)}
+                                className="px-4 py-2.5 min-h-[44px] bg-emerald-700 hover:bg-emerald-800 disabled:bg-emerald-100 disabled:text-emerald-800 text-white text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-1.5"
+                              >
+                                {congratulatingId === booking.id ? (
+                                  <>
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                    <span>Envoi des félicitations...</span>
+                                  </>
+                                ) : booking.agentsCongratulatedAt ? (
+                                  <>
+                                    <CheckCircle2 className="w-3.5 h-3.5" />
+                                    <span>
+                                      {isSingleAgent ? 'Agent félicité' : 'Agents félicités'}
+                                    </span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Award className="w-3.5 h-3.5" />
+                                    <span>
+                                      {isSingleAgent
+                                        ? "Féliciter l'agent affecté"
+                                        : 'Féliciter les agents affectés'}
+                                    </span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          );
+                        })()}
                     </div>
                   )}
 
@@ -1332,17 +1398,24 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
                       <div className="inline-flex items-center gap-2 ml-auto">
                         <button
                           type="button"
-                          onClick={() => {
-                            onDeleteOrder(booking.id);
-                            setConfirmDeleteId(null);
-                          }}
-                          className="px-4 py-2.5 min-h-[44px] bg-rose-700 hover:bg-rose-800 text-white text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-1.5"
+                          disabled={deletingId === booking.id}
+                          onClick={() => handleConfirmDeleteBooking(booking.id)}
+                          className="px-4 py-2.5 min-h-[44px] bg-rose-700 hover:bg-rose-800 disabled:opacity-60 text-white text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-1.5"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
-                          <span>Confirmer la suppression</span>
+                          {deletingId === booking.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Trash2 className="w-3.5 h-3.5" />
+                          )}
+                          <span>
+                            {deletingId === booking.id
+                              ? 'Suppression...'
+                              : 'Confirmer la suppression'}
+                          </span>
                         </button>
                         <button
                           type="button"
+                          disabled={deletingId === booking.id}
                           onClick={() => setConfirmDeleteId(null)}
                           className="px-3 py-2.5 min-h-[44px] text-xs font-semibold text-slate-600 hover:text-slate-900"
                         >
@@ -1352,7 +1425,15 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
                     ) : (
                       <button
                         type="button"
-                        onClick={() => setConfirmDeleteId(booking.id)}
+                        onClick={() => {
+                          setDeleteError((prev) => {
+                            if (!prev[booking.id]) return prev;
+                            const next = { ...prev };
+                            delete next[booking.id];
+                            return next;
+                          });
+                          setConfirmDeleteId(booking.id);
+                        }}
                         className="px-4 py-2.5 min-h-[44px] bg-white hover:bg-rose-50 text-rose-700 border border-rose-200 text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-1.5 ml-auto"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -1360,6 +1441,16 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
                       </button>
                     )}
                   </div>
+
+                  {deleteError[booking.id] && (
+                    <div
+                      role="alert"
+                      className="bg-rose-50 border border-rose-200 rounded-xl px-3.5 py-2.5 text-xs text-rose-800 flex items-start gap-2"
+                    >
+                      <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                      <span>{deleteError[booking.id]}</span>
+                    </div>
+                  )}
                 </div>
               );
             })}

@@ -58,7 +58,18 @@ service cloud.firestore {
     function isActiveAgent() {
       return hasUserDoc() &&
         currentUserData().get('role', '') == 'agent' &&
-        currentUserData().get('accountStatus', 'active') == 'active';
+        (
+          currentUserData().get('accountStatus', 'active') == 'active' ||
+          (currentUserData().get('accountStatus', null) == null && currentUserData().get('status', 'approved') == 'approved')
+        ) &&
+        currentUserData().get('status', 'approved') != 'rejected' &&
+        currentUserData().get('status', 'approved') != 'pending';
+    }
+
+    function isAssignedAgent(bookingData) {
+      return ('assignedAgentIds' in bookingData)
+        && bookingData.assignedAgentIds is list
+        && request.auth.uid in bookingData.assignedAgentIds;
     }
 
     function isOwner(userId) {
@@ -125,11 +136,11 @@ service cloud.firestore {
         && data.keys().hasOnly(['id', 'ownerUid', 'userId', 'serviceId', 'serviceName', 'serviceCategory', 'vehicleType', 'clientName', 'clientPhone', 'commune', 'address', 'clientCoords', 'details', 'clientOfferPrice', 'promoApplied', 'originalPrice', 'discountAmount', 'appliedPromotionId', 'appliedPromotionTitle', 'appliedPromotionDiscount', 'managerCounterPrice', 'priceAdjustmentNote', 'finalPrice', 'status', 'rejectionReason', 'refusalReason', 'refusedAt', 'assignedAgents', 'assignedAgentIds', 'assignedAgentDetails', 'gpsActive', 'clientGpsActive', 'agentGps', 'startedAt', 'completedAt', 'beforePhotos', 'afterPhotos', 'photosArchivedAt', 'agentsCongratulatedAt', 'agentsCongratulatedBy', 'paymentMethod', 'rating', 'review', 'reviewSubmittedAt', 'createdAt', 'updatedAt'])
         && isValidId(data.id)
         && data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128
-        && (!('userId' in data) || (data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128))
+        && (!('userId' in data) || data.userId == null || (data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128))
         && data.serviceId is string && data.serviceId.size() <= 64
         && data.serviceName is string && data.serviceName.size() >= 2 && data.serviceName.size() <= 180
         && data.serviceCategory is string && data.serviceCategory.size() <= 40
-        && (!('vehicleType' in data) || data.vehicleType in ['4_wheels', 'moto', 'velo'])
+        && (!('vehicleType' in data) || data.vehicleType == null || data.vehicleType in ['4_wheels', 'moto', 'velo'])
         && data.clientName is string && data.clientName.size() >= 1 && data.clientName.size() <= 120
         && data.clientPhone is string && data.clientPhone.size() >= 4 && data.clientPhone.size() <= 40
         && data.commune is string && data.commune.size() >= 2 && data.commune.size() <= 120
@@ -138,35 +149,35 @@ service cloud.firestore {
         && data.details is map
         && data.clientOfferPrice is number && data.clientOfferPrice >= 1000
         && (!('promoApplied' in data) || isValidPromoApplied(data.promoApplied))
-        && (!('originalPrice' in data) || (data.originalPrice is number && data.originalPrice >= 1000))
-        && (!('discountAmount' in data) || (data.discountAmount is number && data.discountAmount >= 0))
-        && (!('appliedPromotionId' in data) || (data.appliedPromotionId is string && data.appliedPromotionId.size() <= 64))
-        && (!('appliedPromotionTitle' in data) || (data.appliedPromotionTitle is string && data.appliedPromotionTitle.size() <= 140))
-        && (!('appliedPromotionDiscount' in data) || (data.appliedPromotionDiscount is string && data.appliedPromotionDiscount.size() <= 40))
-        && (!('managerCounterPrice' in data) || data.managerCounterPrice is number)
-        && (!('priceAdjustmentNote' in data) || (data.priceAdjustmentNote is string && data.priceAdjustmentNote.size() <= 300))
+        && (!('originalPrice' in data) || data.originalPrice == null || (data.originalPrice is number && data.originalPrice >= 1000))
+        && (!('discountAmount' in data) || data.discountAmount == null || (data.discountAmount is number && data.discountAmount >= 0))
+        && (!('appliedPromotionId' in data) || data.appliedPromotionId == null || (data.appliedPromotionId is string && data.appliedPromotionId.size() <= 64))
+        && (!('appliedPromotionTitle' in data) || data.appliedPromotionTitle == null || (data.appliedPromotionTitle is string && data.appliedPromotionTitle.size() <= 140))
+        && (!('appliedPromotionDiscount' in data) || data.appliedPromotionDiscount == null || (data.appliedPromotionDiscount is string && data.appliedPromotionDiscount.size() <= 40))
+        && (!('managerCounterPrice' in data) || data.managerCounterPrice == null || data.managerCounterPrice is number)
+        && (!('priceAdjustmentNote' in data) || data.priceAdjustmentNote == null || (data.priceAdjustmentNote is string && data.priceAdjustmentNote.size() <= 300))
         && data.finalPrice is number && data.finalPrice >= 1000
         && data.status in ['pending_negotiation', 'counter_offered', 'confirmed', 'in_transit', 'in_progress', 'completed', 'rejected', 'cancelled']
-        && (!('rejectionReason' in data) || (data.rejectionReason is string && data.rejectionReason.size() <= 300))
-        && (!('refusalReason' in data) || (data.refusalReason is string && data.refusalReason.size() <= 300))
-        && (!('refusedAt' in data) || (data.refusedAt is string && data.refusedAt.size() <= 64))
+        && (!('rejectionReason' in data) || data.rejectionReason == null || (data.rejectionReason is string && data.rejectionReason.size() <= 300))
+        && (!('refusalReason' in data) || data.refusalReason == null || (data.refusalReason is string && data.refusalReason.size() <= 300))
+        && (!('refusedAt' in data) || data.refusedAt == null || (data.refusedAt is string && data.refusedAt.size() <= 64))
         && data.assignedAgents is list && data.assignedAgents.size() <= 10 && (data.assignedAgents.size() == 0 || data.assignedAgents[0] is string)
-        && (!('assignedAgentIds' in data) || (data.assignedAgentIds is list && data.assignedAgentIds.size() <= 10 && (data.assignedAgentIds.size() == 0 || data.assignedAgentIds[0] is string)))
-        && (!('assignedAgentDetails' in data) || (data.assignedAgentDetails is list && data.assignedAgentDetails.size() <= 10 && (data.assignedAgentDetails.size() == 0 || data.assignedAgentDetails[0] is map)))
+        && (!('assignedAgentIds' in data) || data.assignedAgentIds == null || (data.assignedAgentIds is list && data.assignedAgentIds.size() <= 10 && (data.assignedAgentIds.size() == 0 || data.assignedAgentIds[0] is string)))
+        && (!('assignedAgentDetails' in data) || data.assignedAgentDetails == null || (data.assignedAgentDetails is list && data.assignedAgentDetails.size() <= 10 && (data.assignedAgentDetails.size() == 0 || data.assignedAgentDetails[0] is map)))
         && data.gpsActive is bool
         && data.clientGpsActive is bool
-        && (!('agentGps' in data) || data.agentGps is map)
-        && (!('startedAt' in data) || (data.startedAt is string && data.startedAt.size() <= 64))
-        && (!('completedAt' in data) || (data.completedAt is string && data.completedAt.size() <= 64))
+        && (!('agentGps' in data) || data.agentGps == null || data.agentGps is map)
+        && (!('startedAt' in data) || data.startedAt == null || (data.startedAt is string && data.startedAt.size() <= 64))
+        && (!('completedAt' in data) || data.completedAt == null || (data.completedAt is string && data.completedAt.size() <= 64))
         && data.beforePhotos is list && data.beforePhotos.size() <= 5 && (data.beforePhotos.size() == 0 || data.beforePhotos[0] is string)
         && data.afterPhotos is list && data.afterPhotos.size() <= 5 && (data.afterPhotos.size() == 0 || data.afterPhotos[0] is string)
-        && (!('photosArchivedAt' in data) || (data.photosArchivedAt is string && data.photosArchivedAt.size() <= 64))
-        && (!('agentsCongratulatedAt' in data) || (data.agentsCongratulatedAt is string && data.agentsCongratulatedAt.size() <= 64))
-        && (!('agentsCongratulatedBy' in data) || (data.agentsCongratulatedBy is string && data.agentsCongratulatedBy.size() <= 120))
+        && (!('photosArchivedAt' in data) || data.photosArchivedAt == null || (data.photosArchivedAt is string && data.photosArchivedAt.size() <= 64))
+        && (!('agentsCongratulatedAt' in data) || data.agentsCongratulatedAt == null || (data.agentsCongratulatedAt is string && data.agentsCongratulatedAt.size() <= 64))
+        && (!('agentsCongratulatedBy' in data) || data.agentsCongratulatedBy == null || (data.agentsCongratulatedBy is string && data.agentsCongratulatedBy.size() <= 120))
         && data.paymentMethod in ['Airtel Money', 'Moov Money', 'Espèces', 'Carte bancaire']
-        && (!('rating' in data) || (data.rating is number && data.rating >= 1 && data.rating <= 5))
-        && (!('review' in data) || (data.review is string && data.review.size() <= 800))
-        && (!('reviewSubmittedAt' in data) || (data.reviewSubmittedAt is string && data.reviewSubmittedAt.size() <= 64))
+        && (!('rating' in data) || data.rating == null || (data.rating is number && data.rating >= 1 && data.rating <= 5))
+        && (!('review' in data) || data.review == null || (data.review is string && data.review.size() <= 800))
+        && (!('reviewSubmittedAt' in data) || data.reviewSubmittedAt == null || (data.reviewSubmittedAt is string && data.reviewSubmittedAt.size() <= 64))
         && data.createdAt is string && data.createdAt.size() <= 64
         && data.updatedAt is string && data.updatedAt.size() <= 64;
     }
@@ -257,54 +268,59 @@ service cloud.firestore {
 
     match /bookings/{bookingId} {
       allow get: if isSignedIn() && isValidId(bookingId) && (
-        isAdmin() || isActiveManager() || (isActiveAgent() && request.auth.uid in existing().get('assignedAgentIds', [])) || existing().ownerUid == request.auth.uid || existing().userId == request.auth.uid
+        isAdmin() || isActiveManager() || (isActiveAgent() && isAssignedAgent(existing())) || existing().ownerUid == request.auth.uid || existing().userId == request.auth.uid
       );
       allow list: if isSignedIn() && (
-        isAdmin() || isActiveManager() || (isActiveAgent() && request.auth.uid in existing().get('assignedAgentIds', [])) || existing().ownerUid == request.auth.uid || existing().userId == request.auth.uid
+        isAdmin() || isActiveManager() || (isActiveAgent() && isAssignedAgent(existing())) || existing().ownerUid == request.auth.uid || existing().userId == request.auth.uid
       );
       allow create: if isSignedIn() && isNotBanned() && isValidId(bookingId) && isValidBooking(incoming())
         && incoming().id == bookingId
         && incoming().ownerUid == request.auth.uid
         && (!('userId' in incoming()) || incoming().userId == request.auth.uid)
         && incoming().status == 'pending_negotiation';
-      allow update: if isSignedIn() && isNotBanned() && isValidId(bookingId) && isValidBooking(incoming())
+      allow update: if isSignedIn() && isNotBanned() && isValidId(bookingId)
         && incoming().id == existing().id
         && incoming().ownerUid == existing().ownerUid
         && incoming().createdAt == existing().createdAt
         && (
           isAdmin()
           || (
-            isActiveManager()
-            && !(existing().status in ['completed', 'rejected', 'cancelled'])
-            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'userId', 'managerCounterPrice', 'priceAdjustmentNote', 'finalPrice', 'rejectionReason', 'refusalReason', 'refusedAt', 'assignedAgents', 'assignedAgentIds', 'assignedAgentDetails', 'gpsActive', 'clientGpsActive', 'agentGps', 'updatedAt'])
-          )
-          || (
-            isActiveManager()
-            && existing().status == 'completed'
-            && incoming().status == existing().status
-            && incoming().finalPrice == existing().finalPrice
-            && incoming().diff(existing()).affectedKeys().hasOnly(['beforePhotos', 'afterPhotos', 'photosArchivedAt', 'agentsCongratulatedAt', 'agentsCongratulatedBy', 'updatedAt'])
-          )
-          || (
-            isActiveAgent()
-            && request.auth.uid in existing().get('assignedAgentIds', [])
-            && existing().status in ['confirmed', 'in_transit', 'in_progress']
-            && incoming().status in ['confirmed', 'in_transit', 'in_progress', 'completed']
-            && incoming().finalPrice == existing().finalPrice
-            && incoming().diff(existing()).affectedKeys().hasOnly(['gpsActive', 'agentGps', 'status', 'startedAt', 'completedAt', 'beforePhotos', 'afterPhotos', 'updatedAt'])
-          )
-          || (
-            (existing().ownerUid == request.auth.uid || existing().userId == request.auth.uid)
-            && !(existing().status in ['rejected', 'cancelled'])
-            && incoming().finalPrice == existing().finalPrice
+            isValidBooking(incoming())
             && (
-              (incoming().diff(existing()).affectedKeys().hasOnly(['clientGpsActive', 'clientCoords', 'updatedAt']))
-              || (existing().status == 'counter_offered' && incoming().status == 'confirmed' && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
-              || (incoming().diff(existing()).affectedKeys().hasOnly(['rating', 'review', 'reviewSubmittedAt', 'updatedAt']))
+              (
+                isActiveManager()
+                && !(existing().status in ['completed', 'rejected', 'cancelled'])
+                && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'userId', 'managerCounterPrice', 'priceAdjustmentNote', 'finalPrice', 'rejectionReason', 'refusalReason', 'refusedAt', 'assignedAgents', 'assignedAgentIds', 'assignedAgentDetails', 'gpsActive', 'clientGpsActive', 'agentGps', 'updatedAt'])
+              )
+              || (
+                isActiveManager()
+                && existing().status == 'completed'
+                && incoming().status == existing().status
+                && incoming().finalPrice == existing().finalPrice
+                && incoming().diff(existing()).affectedKeys().hasOnly(['beforePhotos', 'afterPhotos', 'photosArchivedAt', 'agentsCongratulatedAt', 'agentsCongratulatedBy', 'updatedAt'])
+              )
+              || (
+                isActiveAgent()
+                && isAssignedAgent(existing())
+                && existing().status in ['confirmed', 'in_transit', 'in_progress']
+                && incoming().status in ['confirmed', 'in_transit', 'in_progress', 'completed']
+                && incoming().finalPrice == existing().finalPrice
+                && incoming().diff(existing()).affectedKeys().hasOnly(['gpsActive', 'agentGps', 'status', 'startedAt', 'completedAt', 'beforePhotos', 'afterPhotos', 'updatedAt'])
+              )
+              || (
+                (existing().ownerUid == request.auth.uid || existing().userId == request.auth.uid)
+                && !(existing().status in ['rejected', 'cancelled'])
+                && incoming().finalPrice == existing().finalPrice
+                && (
+                  (incoming().diff(existing()).affectedKeys().hasOnly(['clientGpsActive', 'clientCoords', 'updatedAt']))
+                  || (existing().status == 'counter_offered' && incoming().status == 'confirmed' && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+                  || (incoming().diff(existing()).affectedKeys().hasOnly(['rating', 'review', 'reviewSubmittedAt', 'updatedAt']))
+                )
+              )
             )
           )
         );
-      allow delete: if isAdmin() || isActiveManager();
+      allow delete: if isValidId(bookingId) && (isAdmin() || isActiveManager());
     }
 
     match /promotions/{promoId} {
@@ -343,8 +359,8 @@ service cloud.firestore {
       allow get: if isSignedIn() && isNotBanned() && isValidId(notificationId) && (
         isAdmin()
         || existing().actorUid == request.auth.uid
-        || existing().recipientId == request.auth.uid
-        || existing().targetOwnerUid == request.auth.uid
+        || (('recipientId' in existing()) && existing().recipientId == request.auth.uid)
+        || (('targetOwnerUid' in existing()) && existing().targetOwnerUid == request.auth.uid)
         || existing().type == 'promo_approved'
         || (hasUserDoc() && currentUserData().get('role', '') in existing().targetRoles
             && !('targetOwnerUid' in existing())
@@ -377,7 +393,8 @@ service cloud.firestore {
         && incoming().actorUid == existing().actorUid
         && incoming().createdAt == existing().createdAt
         && (
-          existing().recipientId == request.auth.uid
+          isAdmin()
+          || (('recipientId' in existing()) && existing().recipientId == request.auth.uid)
           || (('targetOwnerUid' in existing()) && existing().targetOwnerUid == request.auth.uid)
         )
         && incoming().diff(existing()).affectedKeys().hasOnly(['read'])
