@@ -6,6 +6,7 @@ import {
   Check,
   CheckCircle2,
   DollarSign,
+  Loader2,
   LocateFixed,
   Lock,
   MapPin,
@@ -34,6 +35,61 @@ const ResolvedNeighborhood: React.FC<{ coords?: GpsPoint | null; fallback?: stri
   return <span>{name || fallback || 'Détection...'}</span>;
 };
 
+const MANAGER_STATUS_META: Record<
+  Booking['status'],
+  { label: string; className: string }
+> = {
+  pending_negotiation: {
+    label: 'En attente de validation',
+    className: 'bg-amber-50 text-amber-800 border-amber-200',
+  },
+  counter_offered: {
+    label: 'Contre-offre envoyée',
+    className: 'bg-amber-50 text-amber-800 border-amber-200',
+  },
+  confirmed: {
+    label: 'Validée · Agent affecté',
+    className: 'bg-sky-50 text-sky-800 border-sky-200',
+  },
+  in_transit: {
+    label: 'Agent en route',
+    className: 'bg-indigo-50 text-indigo-800 border-indigo-200',
+  },
+  in_progress: {
+    label: 'Intervention en cours',
+    className: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+  },
+  completed: {
+    label: 'Intervention terminée',
+    className: 'bg-emerald-700 text-white border-emerald-700',
+  },
+  rejected: {
+    label: 'Commande refusée',
+    className: 'bg-rose-50 text-rose-800 border-rose-200',
+  },
+  cancelled: {
+    label: 'Commande annulée',
+    className: 'bg-slate-100 text-slate-600 border-slate-200',
+  },
+};
+
+function formatOrderTimestamp(value?: string): string {
+  if (!value) return '';
+  if (!value.includes('T')) return value;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  const datePart = parsed.toLocaleDateString('fr-FR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+  const timePart = parsed.toLocaleTimeString('fr-FR', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  return `${datePart} à ${timePart}`;
+}
+
 interface ManagerOrdersViewProps {
   bookings: Booking[];
   services: ServiceItem[];
@@ -49,6 +105,7 @@ interface ManagerOrdersViewProps {
   ) => Promise<void> | void;
   onRefuseOrder: (bookingId: string, reason: string) => void;
   onDeleteOrder: (bookingId: string) => void;
+  onCongratulateAgents?: (bookingId: string) => Promise<void> | void;
   onArchivePhotos: (bookingId: string) => void;
   onUpdatePrice: (bookingId: string, newPrice: number, note: string) => void;
   onAssignAgents: (bookingId: string, agents: string[], agentIds?: string[]) => void;
@@ -80,7 +137,8 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
   onValidateOrder,
   onRefuseOrder,
   onDeleteOrder,
-  onArchivePhotos,
+  onCongratulateAgents,
+  onArchivePhotos: _onArchivePhotos,
   onUpdatePrice,
   onAssignAgents,
   onUpdateServiceBasePrice,
@@ -116,7 +174,34 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
     'Commande refusée par le gérant : créneau ou tarif non disponible.'
   );
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [congratulatingId, setCongratulatingId] = useState<string | null>(null);
+  const [congratulateError, setCongratulateError] = useState<Record<string, string>>({});
+  const [congratulateSuccess, setCongratulateSuccess] = useState<Record<string, string>>({});
   const [whatsappClientBooking, setWhatsappClientBooking] = useState<Booking | null>(null);
+
+  const handleCongratulateClick = async (bookingId: string) => {
+    if (!onCongratulateAgents || congratulatingId) return;
+    setCongratulatingId(bookingId);
+    setCongratulateError((prev) => ({ ...prev, [bookingId]: '' }));
+    try {
+      await onCongratulateAgents(bookingId);
+      setCongratulateSuccess((prev) => ({
+        ...prev,
+        [bookingId]: 'Félicitations envoyées en temps réel aux agents affectés.',
+      }));
+    } catch (error) {
+      console.error('[ManagerOrdersView] Congratulate agents failed:', { bookingId, error });
+      setCongratulateError((prev) => ({
+        ...prev,
+        [bookingId]:
+          error instanceof Error && error.message
+            ? error.message
+            : "Impossible d'envoyer les félicitations aux agents.",
+      }));
+    } finally {
+      setCongratulatingId(null);
+    }
+  };
 
   // Real-time base price drafts
   const [servicePriceDrafts, setServicePriceDrafts] = useState<Record<string, number>>({});
@@ -602,8 +687,26 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
                       <div className="text-base font-bold text-emerald-800 tabular-nums">
                         Tarif final à payer : {booking.finalPrice.toLocaleString()} XAF
                       </div>
-                      <div className="text-[11px] font-medium text-slate-600 mt-0.5">
-                        Statut : <strong className="text-slate-900">{booking.status}</strong>
+                      <div className="mt-1 flex flex-col items-end gap-1">
+                        <span
+                          className={`inline-flex items-center px-2.5 py-0.5 rounded-md border text-[11px] font-bold ${
+                            (MANAGER_STATUS_META[booking.status] || {
+                              className: 'bg-slate-100 text-slate-800 border-slate-200',
+                            }).className
+                          }`}
+                        >
+                          {MANAGER_STATUS_META[booking.status]?.label || booking.status}
+                        </span>
+                        {(booking.startedAt || booking.completedAt) && (
+                          <div className="text-[11px] font-mono text-slate-600 tabular-nums flex flex-wrap justify-end gap-x-2">
+                            {booking.startedAt && (
+                              <span>Début : {formatOrderTimestamp(booking.startedAt)}</span>
+                            )}
+                            {booking.completedAt && (
+                              <span>Fin : {formatOrderTimestamp(booking.completedAt)}</span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -799,62 +902,172 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
                     </div>
                   )}
 
-                  {(booking.beforePhotos.length > 0 || booking.afterPhotos.length > 0) && (
-                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                        <div className="text-xs font-bold text-slate-900 flex items-center gap-2">
-                          <Camera className="w-4 h-4 text-emerald-700" />
-                          <span>Photos d&apos;intervention transmises (Avant / Après)</span>
+                  {booking.status === 'completed' && (
+                    <div className="bg-emerald-50/60 border border-emerald-200 rounded-xl p-4 sm:p-5 space-y-4">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-emerald-200/70 pb-3">
+                        <div className="space-y-0.5">
+                          <div className="text-xs font-bold text-emerald-950 flex items-center gap-2">
+                            <Camera className="w-4 h-4 text-emerald-700 shrink-0" />
+                            <span>Résultat final de la commande terminée</span>
+                          </div>
+                          <p className="text-[11px] text-emerald-900">
+                            {booking.serviceName} · Tarif final :{' '}
+                            <strong className="tabular-nums">
+                              {booking.finalPrice.toLocaleString()} XAF
+                            </strong>
+                            {promoInfo
+                              ? ` (Promo ${promoInfo.discountLabel || promoInfo.title})`
+                              : ''}{' '}
+                            · Agents :{' '}
+                            <strong>
+                              {booking.assignedAgents.length > 0
+                                ? booking.assignedAgents.join(', ')
+                                : 'Non renseigné'}
+                            </strong>
+                          </p>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => onArchivePhotos(booking.id)}
-                          className="px-3.5 py-2 min-h-[38px] bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-1.5 self-start sm:self-auto"
-                        >
-                          <Award className="w-3.5 h-3.5" />
-                          <span>Archiver les photos &amp; Féliciter l&apos;agent</span>
-                        </button>
+                        {booking.completedAt && (
+                          <span className="text-[11px] font-mono text-emerald-800 tabular-nums shrink-0">
+                            Terminée : {formatOrderTimestamp(booking.completedAt)}
+                          </span>
+                        )}
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        {booking.beforePhotos.length > 0 && (
-                          <div className="space-y-1">
-                            <div className="text-[11px] font-semibold text-slate-600">
-                              Photo Avant intervention
-                            </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                        <div className="space-y-1.5">
+                          <div className="text-[11px] font-semibold text-slate-700">
+                            Photo du début
+                          </div>
+                          {booking.beforePhotos.length > 0 ? (
                             <img
                               src={booking.beforePhotos[booking.beforePhotos.length - 1]}
-                              alt={`Avant ${booking.id}`}
-                              className="w-full h-40 object-cover rounded-xl border border-slate-200 bg-white"
+                              alt={`Début ${booking.id}`}
+                              className="w-full h-44 object-cover rounded-xl border border-slate-200 bg-white"
                               referrerPolicy="no-referrer"
                             />
-                          </div>
-                        )}
-                        {booking.afterPhotos.length > 0 && (
-                          <div className="space-y-1">
-                            <div className="text-[11px] font-semibold text-emerald-800">
-                              Photo Après intervention
+                          ) : (
+                            <div className="h-44 rounded-xl border border-dashed border-slate-300 bg-white flex flex-col items-center justify-center text-xs text-slate-500">
+                              <Camera className="w-5 h-5 mb-1 text-slate-400" />
+                              <span>Aucune photo du début transmise</span>
                             </div>
+                          )}
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <div className="text-[11px] font-semibold text-emerald-900">
+                            Photo de la fin
+                          </div>
+                          {booking.afterPhotos.length > 0 ? (
                             <img
                               src={booking.afterPhotos[booking.afterPhotos.length - 1]}
-                              alt={`Après ${booking.id}`}
-                              className="w-full h-40 object-cover rounded-xl border border-emerald-200 bg-white"
+                              alt={`Fin ${booking.id}`}
+                              className="w-full h-44 object-cover rounded-xl border border-emerald-200 bg-white"
                               referrerPolicy="no-referrer"
                             />
+                          ) : (
+                            <div className="h-44 rounded-xl border border-dashed border-emerald-200 bg-white flex flex-col items-center justify-center text-xs text-slate-500">
+                              <Camera className="w-5 h-5 mb-1 text-slate-400" />
+                              <span>Aucune photo de la fin transmise</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {(booking.agentsCongratulatedAt || congratulateSuccess[booking.id]) && (
+                        <div
+                          role="status"
+                          className="bg-white border border-emerald-200 rounded-xl px-3.5 py-2.5 text-xs text-emerald-900 flex items-center gap-2"
+                        >
+                          <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+                          <span>
+                            {booking.agentsCongratulatedAt
+                              ? `Agents félicités le ${formatOrderTimestamp(booking.agentsCongratulatedAt)}${booking.agentsCongratulatedBy ? ` par ${booking.agentsCongratulatedBy}` : ''} — notification envoyée en temps réel.`
+                              : congratulateSuccess[booking.id]}
+                          </span>
+                        </div>
+                      )}
+
+                      {congratulateError[booking.id] && (
+                        <div
+                          role="alert"
+                          className="bg-rose-50 border border-rose-200 rounded-xl px-3.5 py-2.5 text-xs text-rose-800 flex items-start gap-2"
+                        >
+                          <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                          <span>{congratulateError[booking.id]}</span>
+                        </div>
+                      )}
+
+                      {onCongratulateAgents &&
+                        ((booking.assignedAgentIds && booking.assignedAgentIds.length > 0) ||
+                          booking.assignedAgents.length > 0) && (
+                          <div className="flex flex-wrap items-center gap-2.5 pt-1">
+                            <button
+                              type="button"
+                              disabled={
+                                Boolean(booking.agentsCongratulatedAt) ||
+                                congratulatingId === booking.id
+                              }
+                              onClick={() => handleCongratulateClick(booking.id)}
+                              className="px-4 py-2.5 min-h-[44px] bg-emerald-700 hover:bg-emerald-800 disabled:bg-emerald-100 disabled:text-emerald-800 text-white text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-1.5"
+                            >
+                              {congratulatingId === booking.id ? (
+                                <>
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  <span>Envoi des félicitations...</span>
+                                </>
+                              ) : booking.agentsCongratulatedAt ? (
+                                <>
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                  <span>Agents félicités</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Award className="w-3.5 h-3.5" />
+                                  <span>Féliciter les agents</span>
+                                </>
+                              )}
+                            </button>
                           </div>
                         )}
-                      </div>
                     </div>
                   )}
 
-                  {booking.photosArchivedAt &&
-                    booking.beforePhotos.length === 0 &&
-                    booking.afterPhotos.length === 0 && (
-                      <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-3.5 py-2.5 text-xs text-emerald-900 flex items-center gap-2">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
-                        <span>
-                          Photos consultées et archivées — message d&apos;encouragement envoyé à l&apos;agent.
-                        </span>
+                  {booking.status !== 'completed' &&
+                    (booking.beforePhotos.length > 0 || booking.afterPhotos.length > 0) && (
+                      <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+                        <div className="text-xs font-bold text-slate-900 flex items-center gap-2">
+                          <Camera className="w-4 h-4 text-emerald-700" />
+                          <span>Photos transmises en cours d&apos;intervention</span>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          {booking.beforePhotos.length > 0 && (
+                            <div className="space-y-1">
+                              <div className="text-[11px] font-semibold text-slate-600">
+                                Photo du début
+                              </div>
+                              <img
+                                src={booking.beforePhotos[booking.beforePhotos.length - 1]}
+                                alt={`Avant ${booking.id}`}
+                                className="w-full h-40 object-cover rounded-xl border border-slate-200 bg-white"
+                                referrerPolicy="no-referrer"
+                              />
+                            </div>
+                          )}
+                          {booking.afterPhotos.length > 0 && (
+                            <div className="space-y-1">
+                              <div className="text-[11px] font-semibold text-emerald-800">
+                                Photo de la fin
+                              </div>
+                              <img
+                                src={booking.afterPhotos[booking.afterPhotos.length - 1]}
+                                alt={`Après ${booking.id}`}
+                                className="w-full h-40 object-cover rounded-xl border border-emerald-200 bg-white"
+                                referrerPolicy="no-referrer"
+                              />
+                            </div>
+                          )}
+                        </div>
                       </div>
                     )}
 
@@ -1143,7 +1356,7 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
                         className="px-4 py-2.5 min-h-[44px] bg-white hover:bg-rose-50 text-rose-700 border border-rose-200 text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-1.5 ml-auto"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
-                        <span>Supprimer définitivement</span>
+                        <span>Supprimer la commande</span>
                       </button>
                     )}
                   </div>

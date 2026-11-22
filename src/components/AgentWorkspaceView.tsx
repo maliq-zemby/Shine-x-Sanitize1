@@ -1,9 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  AlertTriangle,
+  Award,
   BellRing,
   Camera,
   CheckCheck,
   CheckCircle2,
+  Loader2,
   LocateFixed,
   Lock,
   MapPin,
@@ -13,6 +16,7 @@ import {
   Tag,
   Upload,
   Users,
+  X,
 } from 'lucide-react';
 import { DEFAULT_GPS_POSITION } from '../data/quartiers';
 import { AppNotification, Booking, BookingStatus, GpsPoint } from '../types';
@@ -35,15 +39,18 @@ interface AgentWorkspaceViewProps {
   onMarkAllNotificationsRead?: () => void;
   onToggleGps: (bookingId: string, initialPoint?: GpsPoint) => void;
   onUpdateAgentGps: (bookingId: string, point: GpsPoint) => void;
-  onStartPlacement: (bookingId: string, beforePhotoUrl?: string) => void;
-  onFinishPlacement: (bookingId: string, afterPhotoUrl?: string, beforePhotoUrl?: string) => void;
+  onStartPlacement: (bookingId: string, beforePhotoUrl?: string) => Promise<void> | void;
+  onFinishPlacement: (
+    bookingId: string,
+    afterPhotoUrl?: string,
+    beforePhotoUrl?: string
+  ) => Promise<void> | void;
 }
 
 const VALIDATED_MISSION_STATUSES: ReadonlySet<BookingStatus> = new Set([
   'confirmed',
   'in_transit',
   'in_progress',
-  'completed',
 ]);
 
 const STATUS_BADGE: Record<string, { label: string; className: string }> = {
@@ -74,6 +81,23 @@ function formatAlertTime(iso: string): string {
   } catch {
     return "À l'instant";
   }
+}
+
+function formatMissionTimestamp(value?: string): string {
+  if (!value) return '';
+  if (!value.includes('T')) return value;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  const datePart = parsed.toLocaleDateString('fr-FR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+  const timePart = parsed.toLocaleTimeString('fr-FR', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  return `${datePart} à ${timePart}`;
 }
 
 const NeighborhoodLabel: React.FC<{ coords?: GpsPoint | null; fallback?: string }> = ({
@@ -139,6 +163,10 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
   const [beforeDrafts, setBeforeDrafts] = useState<Record<string, string>>({});
   const [afterDrafts, setAfterDrafts] = useState<Record<string, string>>({});
   const [photoErrors, setPhotoErrors] = useState<Record<string, string>>({});
+  const [actionLoading, setActionLoading] = useState<Record<string, 'start' | 'finish' | null>>({});
+  const [actionErrors, setActionErrors] = useState<Record<string, string>>({});
+  const [actionSuccess, setActionSuccess] = useState<Record<string, string>>({});
+  const [completedBanner, setCompletedBanner] = useState<string | null>(null);
 
   useEffect(() => {
     if (agentMissions.length === 0) {
@@ -351,44 +379,84 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
     }
   };
 
-  const handleStartWithPhoto = (booking: Booking) => {
+  const handleStartWithPhoto = async (booking: Booking) => {
+    if (actionLoading[booking.id]) return;
     const chosenBefore =
       beforeDrafts[booking.id] ||
       booking.beforePhotos[booking.beforePhotos.length - 1];
-    if (!chosenBefore) {
-      setPhotoErrors((prev) => ({
+
+    setActionLoading((prev) => ({ ...prev, [booking.id]: 'start' }));
+    setActionErrors((prev) => ({ ...prev, [booking.id]: '' }));
+    setActionSuccess((prev) => ({ ...prev, [booking.id]: '' }));
+    setPhotoErrors((prev) => ({ ...prev, [booking.id]: '' }));
+
+    try {
+      await onStartPlacement(booking.id, chosenBefore);
+      setActionSuccess((prev) => ({
         ...prev,
-        [booking.id]: "Veuillez joindre une photo AVANT l'intervention.",
+        [booking.id]: "Début d'intervention enregistré et synchronisé en temps réel.",
       }));
-      return;
+    } catch (error) {
+      console.error('[AgentWorkspaceView] Échec "Marquer le début":', {
+        bookingId: booking.id,
+        agentUid,
+        error,
+      });
+      setActionErrors((prev) => ({
+        ...prev,
+        [booking.id]:
+          error instanceof Error && error.message
+            ? error.message
+            : "Impossible d'enregistrer le début de la mission dans Firestore.",
+      }));
+    } finally {
+      setActionLoading((prev) => ({ ...prev, [booking.id]: null }));
     }
-    onStartPlacement(booking.id, chosenBefore);
   };
 
-  const handleFinishWithPhoto = (booking: Booking) => {
+  const handleFinishWithPhoto = async (booking: Booking) => {
+    if (actionLoading[booking.id]) return;
     const chosenBefore =
       beforeDrafts[booking.id] ||
       booking.beforePhotos[booking.beforePhotos.length - 1];
     const chosenAfter =
       afterDrafts[booking.id] ||
       booking.afterPhotos[booking.afterPhotos.length - 1];
-    if (!chosenBefore) {
-      setPhotoErrors((prev) => ({
+
+    setActionLoading((prev) => ({ ...prev, [booking.id]: 'finish' }));
+    setActionErrors((prev) => ({ ...prev, [booking.id]: '' }));
+    setActionSuccess((prev) => ({ ...prev, [booking.id]: '' }));
+    setPhotoErrors((prev) => ({ ...prev, [booking.id]: '' }));
+
+    try {
+      await onFinishPlacement(
+        booking.id,
+        chosenAfter,
+        beforeDrafts[booking.id] || chosenBefore
+      );
+      setActionSuccess((prev) => ({
+        ...prev,
+        [booking.id]: 'Fin de mission enregistrée et synchronisée en temps réel.',
+      }));
+      setCompletedBanner(
+        `Mission #${booking.id} (${booking.serviceName} · ${booking.clientName}) marquée comme terminée. Elle a été retirée de votre liste active, le client a reçu un message de remerciement et le gérant peut consulter le résultat.`
+      );
+    } catch (error) {
+      console.error('[AgentWorkspaceView] Échec "Marquer la fin":', {
+        bookingId: booking.id,
+        agentUid,
+        error,
+      });
+      setActionErrors((prev) => ({
         ...prev,
         [booking.id]:
-          "Veuillez joindre la photo AVANT intervention avant de valider la fin de prestation.",
+          error instanceof Error && error.message
+            ? error.message
+            : "Impossible d'enregistrer la fin de la mission dans Firestore.",
       }));
-      return;
+    } finally {
+      setActionLoading((prev) => ({ ...prev, [booking.id]: null }));
     }
-    if (!chosenAfter) {
-      setPhotoErrors((prev) => ({
-        ...prev,
-        [booking.id]:
-          "Veuillez joindre la photo APRÈS intervention pour valider la fin de mission.",
-      }));
-      return;
-    }
-    onFinishPlacement(booking.id, chosenAfter, beforeDrafts[booking.id] || chosenBefore);
   };
 
   return (
@@ -397,13 +465,13 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Espace Agent · {agentName}</h1>
           <p className="text-xs text-slate-600 mt-1">
-            Recevez vos commandes validées en temps réel, activez le GPS haute précision, marquez le début du placement avec photo avant puis validez la fin avec photo après.
+            Recevez vos commandes validées en temps réel, activez le GPS haute précision, marquez le début puis la fin de l&apos;intervention (photos avant/après facultatives).
           </p>
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
           <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-xs font-semibold text-slate-700 shadow-xs">
-            <span>Missions assignées :</span>
+            <span>Missions actives :</span>
             <strong className="text-emerald-700 tabular-nums">{agentMissions.length}</strong>
           </span>
           {unreadAlertCount > 0 && (
@@ -417,6 +485,26 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
           )}
         </div>
       </div>
+
+      {completedBanner && (
+        <div
+          role="status"
+          className="bg-emerald-50 border border-emerald-200 text-emerald-950 rounded-2xl px-4 py-3.5 text-xs flex items-start justify-between gap-3"
+        >
+          <div className="flex items-start gap-2.5">
+            <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
+            <span className="font-medium leading-relaxed">{completedBanner}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setCompletedBanner(null)}
+            aria-label="Fermer la confirmation"
+            className="p-1 text-emerald-700 hover:text-emerald-950 shrink-0"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Alertes & Notifications dédiées à l'Agent */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
@@ -466,7 +554,10 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
                 >
                   <div className="space-y-1 min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      {unread && (
+                      {alert.type === 'agent_encouragement' && (
+                        <Award className="w-4 h-4 text-emerald-700 shrink-0" />
+                      )}
+                      {unread && alert.type !== 'agent_encouragement' && (
                         <span className="w-2 h-2 rounded-full bg-rose-600 shrink-0" />
                       )}
                       <span className="text-xs font-bold text-slate-900">{alert.title}</span>
@@ -594,7 +685,9 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
           const afterPreview =
             afterDrafts[mission.id] ||
             mission.afterPhotos[mission.afterPhotos.length - 1];
-          const err = photoErrors[mission.id];
+          const err = actionErrors[mission.id] || photoErrors[mission.id];
+          const successMsg = actionSuccess[mission.id];
+          const loadingAction = actionLoading[mission.id] || null;
           const statusMeta = STATUS_BADGE[mission.status] || STATUS_BADGE.confirmed;
           const promoInfo = getBookingPromoInfo(mission);
           const isFocused = selectedMissionId === mission.id;
@@ -741,13 +834,13 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="border border-slate-200 rounded-xl p-4 space-y-3">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     <span className="text-xs font-bold text-slate-900">
-                      2. Début du placement &amp; Image Avant
+                      2. Début d&apos;intervention &amp; Image Avant
                     </span>
                     {mission.startedAt && (
-                      <span className="text-[11px] font-mono text-emerald-700">
-                        {mission.startedAt}
+                      <span className="text-[11px] font-mono text-emerald-700 tabular-nums">
+                        {formatMissionTimestamp(mission.startedAt)}
                       </span>
                     )}
                   </div>
@@ -762,7 +855,7 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
                   ) : (
                     <div className="h-36 rounded-xl border border-dashed border-slate-300 bg-slate-50 flex flex-col items-center justify-center text-xs text-slate-500">
                       <Camera className="w-5 h-5 mb-1 text-slate-400" />
-                      <span>Aucune photo avant chargée</span>
+                      <span>Photo avant (optionnelle)</span>
                     </div>
                   )}
 
@@ -783,28 +876,41 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
 
                     <button
                       type="button"
-                      disabled={mission.status === 'in_progress' || mission.status === 'completed'}
+                      disabled={
+                        mission.status === 'in_progress' ||
+                        mission.status === 'completed' ||
+                        Boolean(loadingAction)
+                      }
                       onClick={() => handleStartWithPhoto(mission)}
                       className="px-4 py-2.5 min-h-[44px] bg-emerald-700 hover:bg-emerald-800 disabled:bg-slate-200 disabled:text-slate-500 text-white text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-1.5"
                     >
-                      <Play className="w-3.5 h-3.5" />
-                      <span>
-                        {mission.status === 'in_progress' || mission.status === 'completed'
-                          ? 'Début marqué'
-                          : 'Marquer début du placement'}
-                      </span>
+                      {loadingAction === 'start' ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <span>Enregistrement...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Play className="w-3.5 h-3.5" />
+                          <span>
+                            {mission.status === 'in_progress' || mission.status === 'completed'
+                              ? 'Début marqué'
+                              : 'Marquer le début'}
+                          </span>
+                        </>
+                      )}
                     </button>
                   </div>
                 </div>
 
                 <div className="border border-slate-200 rounded-xl p-4 space-y-3">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     <span className="text-xs font-bold text-slate-900">
                       3. Fin de mission &amp; Image Après
                     </span>
                     {mission.completedAt && (
-                      <span className="text-[11px] font-mono text-emerald-700">
-                        {mission.completedAt}
+                      <span className="text-[11px] font-mono text-emerald-700 tabular-nums">
+                        {formatMissionTimestamp(mission.completedAt)}
                       </span>
                     )}
                   </div>
@@ -819,7 +925,7 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
                   ) : (
                     <div className="h-36 rounded-xl border border-dashed border-slate-300 bg-slate-50 flex flex-col items-center justify-center text-xs text-slate-500">
                       <Camera className="w-5 h-5 mb-1 text-slate-400" />
-                      <span>Chargez la photo après nettoyage</span>
+                      <span>Photo après nettoyage (optionnelle)</span>
                     </div>
                   )}
 
@@ -840,6 +946,7 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
 
                     <button
                       type="button"
+                      disabled={mission.status === 'completed' || Boolean(loadingAction)}
                       onClick={() =>
                         setAfterDrafts((prev) => ({
                           ...prev,
@@ -848,18 +955,23 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
                             '/src/assets/images/hero_shine_alp_1795029308068.jpg',
                         }))
                       }
-                      className="px-3 py-2.5 min-h-[44px] bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-medium rounded-xl"
+                      className="px-3 py-2.5 min-h-[44px] bg-white border border-slate-200 hover:bg-slate-50 disabled:opacity-50 text-slate-700 text-xs font-medium rounded-xl"
                     >
                       Simuler photo prise
                     </button>
 
                     <button
                       type="button"
-                      disabled={mission.status === 'completed'}
+                      disabled={mission.status === 'completed' || Boolean(loadingAction)}
                       onClick={() => handleFinishWithPhoto(mission)}
                       className="px-4 py-2.5 min-h-[44px] bg-slate-900 hover:bg-emerald-700 disabled:bg-emerald-100 disabled:text-emerald-800 text-white text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-1.5"
                     >
-                      {mission.status === 'completed' ? (
+                      {loadingAction === 'finish' ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <span>Enregistrement...</span>
+                        </>
+                      ) : mission.status === 'completed' ? (
                         <>
                           <CheckCircle2 className="w-3.5 h-3.5" />
                           <span>Mission terminée</span>
@@ -875,9 +987,23 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
                 </div>
               </div>
 
+              {successMsg && !err && (
+                <div
+                  role="status"
+                  className="bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-xl px-4 py-2.5 text-xs font-semibold flex items-center gap-2"
+                >
+                  <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+                  <span>{successMsg}</span>
+                </div>
+              )}
+
               {err && (
-                <div className="bg-rose-50 border border-rose-200 text-rose-800 rounded-xl px-4 py-2.5 text-xs font-medium">
-                  {err}
+                <div
+                  role="alert"
+                  className="bg-rose-50 border border-rose-200 text-rose-800 rounded-xl px-4 py-2.5 text-xs font-medium flex items-start gap-2"
+                >
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <span>{err}</span>
                 </div>
               )}
             </div>

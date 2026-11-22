@@ -159,6 +159,8 @@ export interface Booking {
   beforePhotos: string[];
   afterPhotos: string[];
   photosArchivedAt?: string;
+  agentsCongratulatedAt?: string;
+  agentsCongratulatedBy?: string;
   createdAt: string;
   updatedAt?: string;
   paymentMethod: PaymentMethod;

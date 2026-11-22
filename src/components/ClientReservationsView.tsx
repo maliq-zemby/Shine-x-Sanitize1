@@ -23,6 +23,7 @@ import { WhatsAppComposerModal } from './WhatsAppComposerModal';
 interface ClientReservationsViewProps {
   bookings: Booking[];
   refusalNotifications?: AppNotification[];
+  thankYouNotifications?: AppNotification[];
   readNotificationIds?: string[];
   isAuthenticated: boolean;
   onOpenAuth: () => void;
@@ -30,6 +31,7 @@ interface ClientReservationsViewProps {
   onSubmitReview: (bookingId: string, rating: number, comment: string) => void;
   onToggleClientGps: (bookingId: string, coords?: GpsPoint) => void;
   onDismissRefusalNotification?: (notifId: string) => void;
+  onDismissNotification?: (notifId: string) => void;
   onOpenCatalog: () => void;
 }
 
@@ -47,9 +49,27 @@ const STATUS_LABELS: Record<Booking['status'], string> = {
 const isTrackableBooking = (b: Booking) =>
   b.status !== 'rejected' && b.status !== 'cancelled' && b.status !== 'completed';
 
+function formatBookingTimestamp(value?: string): string {
+  if (!value) return '';
+  if (!value.includes('T')) return value;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  const datePart = parsed.toLocaleDateString('fr-FR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+  const timePart = parsed.toLocaleTimeString('fr-FR', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  return `${datePart} à ${timePart}`;
+}
+
 export const ClientReservationsView: React.FC<ClientReservationsViewProps> = ({
   bookings,
   refusalNotifications = [],
+  thankYouNotifications = [],
   readNotificationIds = [],
   isAuthenticated,
   onOpenAuth,
@@ -57,6 +77,7 @@ export const ClientReservationsView: React.FC<ClientReservationsViewProps> = ({
   onSubmitReview,
   onToggleClientGps,
   onDismissRefusalNotification,
+  onDismissNotification,
   onOpenCatalog,
 }) => {
   const activeTrackableBookings = bookings.filter(isTrackableBooking);
@@ -163,6 +184,38 @@ export const ClientReservationsView: React.FC<ClientReservationsViewProps> = ({
       )}
 
       {isAuthenticated &&
+        thankYouNotifications
+          .filter((n) => n.read !== true && !readNotificationIds.includes(n.id))
+          .map((notif) => (
+            <div
+              key={notif.id}
+              role="status"
+              className="bg-emerald-50 border border-emerald-300 text-emerald-950 rounded-2xl px-4 py-3.5 text-xs flex items-start justify-between gap-3 shadow-xs"
+            >
+              <div className="flex items-start gap-2.5 min-w-0">
+                <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
+                <div className="space-y-0.5">
+                  <div className="font-bold text-emerald-900">{notif.title}</div>
+                  <p className="text-emerald-800 leading-relaxed">{notif.message || notif.body}</p>
+                </div>
+              </div>
+              {(onDismissNotification || onDismissRefusalNotification) && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    (onDismissNotification || onDismissRefusalNotification)?.(notif.id)
+                  }
+                  aria-label="Marquer comme lu"
+                  className="px-2.5 py-1 rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-900 font-semibold text-[11px] shrink-0 inline-flex items-center gap-1"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  <span>Lu</span>
+                </button>
+              )}
+            </div>
+          ))}
+
+      {isAuthenticated &&
         refusalNotifications
           .filter((n) => n.read !== true && !readNotificationIds.includes(n.id))
           .map((notif) => (
@@ -178,10 +231,12 @@ export const ClientReservationsView: React.FC<ClientReservationsViewProps> = ({
                   <p className="text-rose-800 leading-relaxed">{notif.message || notif.body}</p>
                 </div>
               </div>
-              {onDismissRefusalNotification && (
+              {(onDismissNotification || onDismissRefusalNotification) && (
                 <button
                   type="button"
-                  onClick={() => onDismissRefusalNotification(notif.id)}
+                  onClick={() =>
+                    (onDismissNotification || onDismissRefusalNotification)?.(notif.id)
+                  }
                   aria-label="Marquer comme lu"
                   className="px-2.5 py-1 rounded-lg bg-rose-100 hover:bg-rose-200 text-rose-800 font-semibold text-[11px] shrink-0 inline-flex items-center gap-1"
                 >
@@ -324,27 +379,39 @@ export const ClientReservationsView: React.FC<ClientReservationsViewProps> = ({
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 text-xs font-semibold text-slate-800 shrink-0">
-                  {booking.status === 'in_transit' && (
-                    <Navigation className="w-4 h-4 text-emerald-700" />
+                <div className="flex flex-col sm:items-end gap-1 shrink-0">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-slate-800">
+                    {booking.status === 'in_transit' && (
+                      <Navigation className="w-4 h-4 text-emerald-700" />
+                    )}
+                    {booking.status === 'completed' && (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-700" />
+                    )}
+                    {(booking.status === 'rejected' || booking.status === 'cancelled') && (
+                      <AlertTriangle className="w-4 h-4 text-rose-600" />
+                    )}
+                    <span
+                      className={
+                        booking.status === 'rejected' || booking.status === 'cancelled'
+                          ? 'text-rose-700'
+                          : booking.status === 'counter_offered'
+                          ? 'text-amber-700'
+                          : 'text-emerald-800'
+                      }
+                    >
+                      {STATUS_LABELS[booking.status]}
+                    </span>
+                  </div>
+                  {(booking.startedAt || booking.completedAt) && (
+                    <div className="text-[11px] font-mono text-slate-500 tabular-nums flex flex-wrap sm:justify-end gap-x-2">
+                      {booking.startedAt && (
+                        <span>Début : {formatBookingTimestamp(booking.startedAt)}</span>
+                      )}
+                      {booking.completedAt && (
+                        <span>Fin : {formatBookingTimestamp(booking.completedAt)}</span>
+                      )}
+                    </div>
                   )}
-                  {booking.status === 'completed' && (
-                    <CheckCircle2 className="w-4 h-4 text-emerald-700" />
-                  )}
-                  {(booking.status === 'rejected' || booking.status === 'cancelled') && (
-                    <AlertTriangle className="w-4 h-4 text-rose-600" />
-                  )}
-                  <span
-                    className={
-                      booking.status === 'rejected' || booking.status === 'cancelled'
-                        ? 'text-rose-700'
-                        : booking.status === 'counter_offered'
-                        ? 'text-amber-700'
-                        : 'text-emerald-800'
-                    }
-                  >
-                    {STATUS_LABELS[booking.status]}
-                  </span>
                 </div>
               </div>
 

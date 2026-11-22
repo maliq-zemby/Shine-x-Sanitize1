@@ -255,6 +255,7 @@ export default function App() {
     relatedTab: ActiveTab;
     actorUid?: string;
     read?: boolean;
+    throwOnError?: boolean;
   }) => {
     const uid = params.actorUid || auth.currentUser?.uid;
     if (!uid) return;
@@ -283,6 +284,9 @@ export default function App() {
       await setDoc(doc(db, 'notifications', notifId), notif);
     } catch (err) {
       console.warn('Notification publish skipped:', err);
+      if (params.throwOnError) {
+        throw err;
+      }
     }
   };
 
@@ -610,7 +614,6 @@ export default function App() {
         'confirmed',
         'in_transit',
         'in_progress',
-        'completed',
       ]);
       const unsubAgent = onSnapshot(
         query(bookingsRef, where('assignedAgentIds', 'array-contains', firebaseUser.uid)),
@@ -1878,22 +1881,68 @@ export default function App() {
     });
   };
 
-  const handleStartPlacement = (bookingId: string, beforePhotoUrl?: string) => {
+  const formatBookingUpdateError = (error: unknown, fallback: string): string => {
+    const code = (error as { code?: string })?.code || '';
+    const msg = error instanceof Error ? error.message : String(error || '');
+    if (code === 'permission-denied' || msg.includes('permission-denied') || msg.includes('Missing or insufficient permissions')) {
+      return "Autorisation Firestore refusée pour modifier cette commande. Vérifiez que votre compte agent actif est bien affecté à la commande et que les règles Firestore sont à jour.";
+    }
+    if (code === 'not-found' || msg.includes('No document to update')) {
+      return 'Commande introuvable dans Firestore (elle a peut-être été supprimée).';
+    }
+    if (code === 'unavailable' || code === 'deadline-exceeded') {
+      return 'Connexion instable ou serveur Firestore indisponible. Réessayez dans un instant.';
+    }
+    return fallback;
+  };
+
+  const handleStartPlacement = async (bookingId: string, beforePhotoUrl?: string) => {
+    if (!firebaseUser) {
+      const authErr = new Error('Vous devez être connecté pour démarrer une intervention.');
+      console.error('[handleStartPlacement] Missing firebaseUser', { bookingId });
+      throw authErr;
+    }
+    if (isAccountBanned) {
+      const banErr = new Error('Votre compte est suspendu.');
+      console.error('[handleStartPlacement] Banned user attempted start', { bookingId, uid: firebaseUser.uid });
+      throw banErr;
+    }
+
     const target = bookings.find((b) => b.id === bookingId);
-    const nowLabel = new Date().toLocaleTimeString('fr-FR', {
-      hour: '2-digit',
-      minute: '2-digit',
-    });
+    const nowIso = new Date().toISOString();
     const existingBefore = target?.beforePhotos || [];
-    const nextBefore =
-      beforePhotoUrl && !existingBefore.includes(beforePhotoUrl)
-        ? [...existingBefore, beforePhotoUrl].slice(-5)
-        : existingBefore;
-    persistBookingPatch(bookingId, {
+    const hasNewBeforePhoto = Boolean(beforePhotoUrl && !existingBefore.includes(beforePhotoUrl));
+    const nextBefore = hasNewBeforePhoto && beforePhotoUrl
+      ? [...existingBefore, beforePhotoUrl].slice(-5)
+      : existingBefore;
+
+    const patch: Partial<Booking> & { updatedAt: string } = {
       status: 'in_progress',
-      startedAt: `Aujourd'hui à ${nowLabel}`,
-      beforePhotos: nextBefore,
-    });
+      startedAt: nowIso,
+      updatedAt: nowIso,
+      ...(hasNewBeforePhoto ? { beforePhotos: nextBefore } : {}),
+    };
+
+    try {
+      await updateDoc(doc(db, 'bookings', bookingId), patch);
+      setBookings((prev) =>
+        prev.map((b) => (b.id === bookingId ? { ...b, ...patch } : b))
+      );
+    } catch (error) {
+      console.error('[handleStartPlacement] Firestore updateDoc failed:', {
+        bookingId,
+        agentUid: firebaseUser.uid,
+        role: userProfile?.role,
+        patchKeys: Object.keys(patch),
+        error,
+      });
+      throw new Error(
+        formatBookingUpdateError(
+          error,
+          "Impossible d'enregistrer le début de l'intervention dans Firestore."
+        )
+      );
+    }
   };
 
   const handleFinishPlacement = async (
@@ -1901,53 +1950,239 @@ export default function App() {
     afterPhotoUrl?: string,
     beforePhotoUrl?: string
   ) => {
-    const target = bookings.find((b) => b.id === bookingId);
-    const nowLabel = new Date().toLocaleTimeString('fr-FR', {
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-    const existingBefore = target?.beforePhotos || [];
-    const nextBefore =
-      beforePhotoUrl && !existingBefore.includes(beforePhotoUrl)
-        ? [...existingBefore, beforePhotoUrl].slice(-5)
-        : existingBefore;
-    const existingAfter = target?.afterPhotos || [];
-    const nextAfter =
-      afterPhotoUrl && !existingAfter.includes(afterPhotoUrl)
-        ? [...existingAfter, afterPhotoUrl].slice(-5)
-        : existingAfter;
+    if (!firebaseUser) {
+      const authErr = new Error('Vous devez être connecté pour clôturer une intervention.');
+      console.error('[handleFinishPlacement] Missing firebaseUser', { bookingId });
+      throw authErr;
+    }
+    if (isAccountBanned) {
+      const banErr = new Error('Votre compte est suspendu.');
+      console.error('[handleFinishPlacement] Banned user attempted finish', { bookingId, uid: firebaseUser.uid });
+      throw banErr;
+    }
 
-    await persistBookingPatch(bookingId, {
+    const target = bookings.find((b) => b.id === bookingId);
+    const nowIso = new Date().toISOString();
+    const existingBefore = target?.beforePhotos || [];
+    const hasNewBeforePhoto = Boolean(beforePhotoUrl && !existingBefore.includes(beforePhotoUrl));
+    const nextBefore = hasNewBeforePhoto && beforePhotoUrl
+      ? [...existingBefore, beforePhotoUrl].slice(-5)
+      : existingBefore;
+
+    const existingAfter = target?.afterPhotos || [];
+    const hasNewAfterPhoto = Boolean(afterPhotoUrl && !existingAfter.includes(afterPhotoUrl));
+    const nextAfter = hasNewAfterPhoto && afterPhotoUrl
+      ? [...existingAfter, afterPhotoUrl].slice(-5)
+      : existingAfter;
+
+    const patch: Partial<Booking> & { updatedAt: string } = {
       status: 'completed',
       gpsActive: false,
-      completedAt: `Aujourd'hui à ${nowLabel}`,
-      beforePhotos: nextBefore,
-      afterPhotos: nextAfter,
-    });
+      completedAt: nowIso,
+      updatedAt: nowIso,
+      ...(hasNewBeforePhoto ? { beforePhotos: nextBefore } : {}),
+      ...(hasNewAfterPhoto ? { afterPhotos: nextAfter } : {}),
+    };
 
-    if (target) {
+    try {
+      await updateDoc(doc(db, 'bookings', bookingId), patch);
+      setBookings((prev) =>
+        prev.map((b) => (b.id === bookingId ? { ...b, ...patch } : b))
+      );
+    } catch (error) {
+      console.error('[handleFinishPlacement] Firestore updateDoc failed:', {
+        bookingId,
+        agentUid: firebaseUser.uid,
+        role: userProfile?.role,
+        patchKeys: Object.keys(patch),
+        error,
+      });
+      throw new Error(
+        formatBookingUpdateError(
+          error,
+          "Impossible d'enregistrer la fin de l'intervention dans Firestore."
+        )
+      );
+    }
+
+    let resolvedTarget = target;
+    if (!resolvedTarget) {
+      try {
+        const snap = await getDoc(doc(db, 'bookings', bookingId));
+        if (snap.exists()) {
+          resolvedTarget = snap.data() as Booking;
+        }
+      } catch {
+        // Fallback to local target
+      }
+    }
+
+    if (resolvedTarget) {
       const agentLabel =
         userProfile?.displayName ||
-        (target.assignedAgents.length > 0 ? target.assignedAgents.join(', ') : "L'agent");
+        (resolvedTarget.assignedAgents.length > 0
+          ? resolvedTarget.assignedAgents.join(', ')
+          : "L'agent");
 
-      await publishNotification({
-        type: 'mission_completed',
-        title: `Photos reçues · Mission #${bookingId}`,
-        body: `${agentLabel} a validé la fin de prestation (${target.serviceName} · ${target.clientName}) et transmis les photos avant/après sur votre tableau de bord.`,
-        targetRoles: ['manager', 'admin'],
-        relatedId: bookingId,
-        relatedTab: 'suivi_commande',
-      });
+      try {
+        await publishNotification({
+          type: 'mission_completed',
+          title: `Mission terminée · #${bookingId}`,
+          body: `${agentLabel} a validé la fin de prestation (${resolvedTarget.serviceName} · ${resolvedTarget.clientName})${hasNewAfterPhoto || nextAfter.length > 0 ? ' et transmis les photos avant/après sur votre tableau de bord.' : '.'}`,
+          targetRoles: ['manager', 'admin'],
+          orderId: bookingId,
+          relatedId: bookingId,
+          relatedTab: 'suivi_commande',
+          read: false,
+        });
 
-      await publishNotification({
-        type: 'client_thank_you',
-        title: `Merci pour votre confiance !`,
-        body: `Merci pour votre confiance, ${target.clientName} ! L'équipe Shine-x-Sanitize Alp Group vous remercie et espère vous revoir très bientôt.`,
-        targetRoles: ['client'],
-        targetOwnerUid: target.ownerUid,
-        relatedId: bookingId,
-        relatedTab: 'mes_reservations',
+        const clientOwnerUid = resolvedTarget.ownerUid || resolvedTarget.userId;
+        if (clientOwnerUid) {
+          const thankYouMsg = `Merci pour votre confiance, ${resolvedTarget.clientName} ! Votre intervention « ${resolvedTarget.serviceName} » (#${bookingId}) est terminée. L'équipe Shine-x-Sanitize Alp Group vous remercie chaleureusement et espère vous revoir très bientôt.`;
+          await publishNotification({
+            type: 'client_thank_you',
+            title: `Merci pour votre confiance !`,
+            body: thankYouMsg,
+            message: thankYouMsg,
+            targetRoles: ['client'],
+            targetOwnerUid: clientOwnerUid,
+            recipientId: clientOwnerUid,
+            orderId: bookingId,
+            relatedId: bookingId,
+            relatedTab: 'mes_reservations',
+            read: false,
+          });
+        }
+      } catch (notifError) {
+        console.error('[handleFinishPlacement] Notification publish warning (booking already completed):', {
+          bookingId,
+          notifError,
+        });
+      }
+    }
+  };
+
+  const handleCongratulateAgents = async (bookingId: string) => {
+    if (!firebaseUser) {
+      throw new Error('Vous devez être connecté pour féliciter les agents.');
+    }
+    if (isAccountBanned) {
+      throw new Error('Votre compte est suspendu.');
+    }
+
+    let target = bookings.find((b) => b.id === bookingId);
+    if (!target) {
+      const snap = await getDoc(doc(db, 'bookings', bookingId));
+      if (snap.exists()) {
+        target = snap.data() as Booking;
+      }
+    }
+    if (!target) {
+      throw new Error('Commande introuvable dans Firestore.');
+    }
+    if (target.agentsCongratulatedAt) {
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const managerLabel = (
+      userProfile?.companyName
+        ? `${userProfile.displayName} (${userProfile.companyName})`
+        : userProfile?.displayName || 'Le gérant'
+    ).slice(0, 120);
+
+    try {
+      await updateDoc(doc(db, 'bookings', bookingId), {
+        agentsCongratulatedAt: nowIso,
+        agentsCongratulatedBy: managerLabel,
+        updatedAt: nowIso,
       });
+      setBookings((prev) =>
+        prev.map((b) =>
+          b.id === bookingId
+            ? {
+                ...b,
+                agentsCongratulatedAt: nowIso,
+                agentsCongratulatedBy: managerLabel,
+                updatedAt: nowIso,
+              }
+            : b
+        )
+      );
+    } catch (error) {
+      console.error('[handleCongratulateAgents] Failed to mark booking congratulated:', {
+        bookingId,
+        managerUid: firebaseUser.uid,
+        error,
+      });
+      throw new Error(
+        formatBookingUpdateError(
+          error,
+          "Impossible d'enregistrer les félicitations sur la commande dans Firestore."
+        )
+      );
+    }
+
+    const agentIds = Array.from(
+      new Set([
+        ...(target.assignedAgentIds || []).filter(Boolean),
+        ...target.assignedAgents
+          .map((name) => users.find((u) => u.displayName === name && u.role === 'agent')?.uid)
+          .filter((uid): uid is string => Boolean(uid)),
+      ])
+    );
+    const agentNames = target.assignedAgents.length > 0 ? target.assignedAgents : undefined;
+    const congratsMessage = `Félicitations de la part de ${managerLabel} pour l'accomplissement de la commande #${bookingId} (${target.serviceName} · client ${target.clientName}) ! Merci pour votre professionnalisme.`;
+
+    try {
+      if (agentIds.length > 0) {
+        for (const uid of agentIds) {
+          const detailName =
+            target.assignedAgentDetails?.find((d) => d.uid === uid)?.displayName ||
+            users.find((u) => u.uid === uid)?.displayName;
+          await publishNotification({
+            type: 'agent_encouragement',
+            title: `Félicitations du gérant · #${bookingId}`,
+            body: congratsMessage,
+            message: congratsMessage,
+            targetRoles: ['agent'],
+            ...(detailName
+              ? { targetAgentNames: [detailName] }
+              : agentNames
+              ? { targetAgentNames: agentNames }
+              : {}),
+            recipientId: uid,
+            orderId: bookingId,
+            relatedId: bookingId,
+            relatedTab: 'agent_space',
+            read: false,
+            throwOnError: true,
+          });
+        }
+      } else {
+        await publishNotification({
+          type: 'agent_encouragement',
+          title: `Félicitations du gérant · #${bookingId}`,
+          body: congratsMessage,
+          message: congratsMessage,
+          targetRoles: ['agent'],
+          ...(agentNames ? { targetAgentNames: agentNames } : {}),
+          orderId: bookingId,
+          relatedId: bookingId,
+          relatedTab: 'agent_space',
+          read: false,
+          throwOnError: true,
+        });
+      }
+    } catch (error) {
+      console.error('[handleCongratulateAgents] Notification creation failed:', {
+        bookingId,
+        agentIds,
+        error,
+      });
+      throw new Error(
+        "La commande a été marquée mais l'envoi de la notification Firestore aux agents a échoué. Vérifiez les règles Firestore."
+      );
     }
   };
 
@@ -2849,6 +3084,13 @@ export default function App() {
                   n.recipientId === firebaseUser.uid ||
                   n.targetOwnerUid === firebaseUser.uid)
             )}
+            thankYouNotifications={notifications.filter(
+              (n) =>
+                n.type === 'client_thank_you' &&
+                (!firebaseUser ||
+                  n.recipientId === firebaseUser.uid ||
+                  n.targetOwnerUid === firebaseUser.uid)
+            )}
             readNotificationIds={readNotificationIds}
             isAuthenticated={Boolean(firebaseUser && userProfile)}
             onOpenAuth={() => setShowAuthModal(true)}
@@ -2856,6 +3098,7 @@ export default function App() {
             onSubmitReview={handleSubmitReview}
             onToggleClientGps={handleToggleClientGps}
             onDismissRefusalNotification={handleMarkNotificationRead}
+            onDismissNotification={handleMarkNotificationRead}
             onOpenCatalog={() => setActiveTab('services')}
           />
         )}
@@ -2875,6 +3118,7 @@ export default function App() {
             onValidateOrder={handleValidateOrder}
             onRefuseOrder={handleRefuseOrder}
             onDeleteOrder={handleDeleteOrder}
+            onCongratulateAgents={handleCongratulateAgents}
             onArchivePhotos={handleArchiveBookingPhotos}
             onUpdatePrice={handleUpdatePrice}
             onAssignAgents={handleAssignAgents}
