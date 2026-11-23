@@ -111,7 +111,7 @@ export const SERVICES: ServiceItem[] = [
     duration: '2h - 3h',
     description:
       'Nettoyage en profondeur par injection-extraction vapeur, élimination des acariens et des taches tenaces.',
-    image: '/src/assets/images/sofa_shine_alp_1795029309581.jpg',
+    image: '/src/assets/images/sofa_shine_alp_black_tech_1795438790341.jpg',
     materials: ['Velours', 'Cuir', 'Tissu Coton', 'Synthétique', 'Daim'],
     availableOptions: [
       'Désodorisant',
