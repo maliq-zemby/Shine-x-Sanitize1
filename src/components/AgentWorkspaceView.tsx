@@ -26,6 +26,7 @@ import {
   useReverseGeocodedNeighborhood,
 } from '../utils/geocoding';
 import { getBookingPromoInfo } from '../utils/promotions';
+import { BookingItemsList } from './BookingItemsList';
 import { LiveGpsMap } from './LiveGpsMap';
 
 interface AgentWorkspaceViewProps {
@@ -820,6 +821,8 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
                   </>
                 )}
               </div>
+
+              <BookingItemsList booking={mission} compact />
 
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="space-y-0.5">

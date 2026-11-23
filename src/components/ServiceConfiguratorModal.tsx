@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Bike, Car, Check, LocateFixed, Tag, X } from 'lucide-react';
+import { Bike, Car, Check, LocateFixed, ShoppingCart, Tag, X } from 'lucide-react';
 import {
   COMMUNES,
   VEHICLE_BRANDS,
@@ -13,7 +13,7 @@ import {
   QUARTIERS_GRAND_LIBREVILLE,
   matchLocalQuartier,
 } from '../data/quartiers';
-import { Booking, GpsPoint, PaymentMethod, Promotion, ServiceItem } from '../types';
+import { Booking, CartItem, GpsPoint, PaymentMethod, Promotion, ServiceItem } from '../types';
 import { HIGH_ACCURACY_GEO_OPTIONS } from '../utils/geocoding';
 import { buildBookingPromoApplied, computeDiscountedPrice } from '../utils/promotions';
 
@@ -26,6 +26,7 @@ interface ServiceConfiguratorModalProps {
   onRemovePromotion?: () => void;
   onClose: () => void;
   onSubmitBooking: (booking: Booking) => void;
+  onAddToCart?: (item: CartItem) => void;
 }
 
 export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> = ({
@@ -37,6 +38,7 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
   onRemovePromotion,
   onClose,
   onSubmitBooking,
+  onAddToCart,
 }) => {
   const isFourWheelVehicle = service.vehicleType === '4_wheels';
   const isTwoWheelVehicle = service.vehicleType === 'moto' || service.vehicleType === 'velo';
@@ -270,6 +272,58 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
     };
 
     onSubmitBooking(newBooking);
+  };
+
+  const handleAddConfiguredToCart = () => {
+    if (!onAddToCart) return;
+    const resolvedBrand =
+      vehicleBrand === 'Autre marque' ? customBrand.trim() || 'Autre' : vehicleBrand;
+
+    let fullServiceName = `${service.name} (${material})`;
+    if (isFourWheelVehicle) {
+      const modelSuffix = vehicleModel.trim() ? ` ${vehicleModel.trim()}` : '';
+      fullServiceName = `Véhicule 4 roues — ${resolvedBrand}${modelSuffix} (${vehicleSeats} places)`;
+    } else if (isTwoWheelVehicle) {
+      const modelSuffix = vehicleModel.trim() ? ` — ${vehicleModel.trim()}` : '';
+      fullServiceName = `${service.name}${modelSuffix}`;
+    }
+
+    const formattedOptions = selectedOptions.map((opt) => {
+      const optPrice = getOptionPrice(opt);
+      return optPrice === 0
+        ? `${opt} (Gratuit · 0 XAF)`
+        : `${opt} (+${optPrice.toLocaleString()} XAF)`;
+    });
+
+    const unitPrice = Math.max(1000, Math.round(recommendedPrice));
+    const cartItem: CartItem = {
+      cartItemId: `cart-${service.id}-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
+      serviceId: service.id,
+      serviceName: fullServiceName,
+      serviceCategory: service.category,
+      ...(service.vehicleType ? { vehicleType: service.vehicleType } : {}),
+      quantity: 1,
+      unitPrice,
+      totalPrice: unitPrice,
+      material,
+      condition,
+      options: formattedOptions,
+      agentsCount,
+      duration: service.duration,
+      image: service.image,
+      ...(isFourWheelVehicle
+        ? {
+            vehicleBrand: resolvedBrand,
+            ...(vehicleModel.trim() ? { vehicleModel: vehicleModel.trim() } : {}),
+            vehicleSeats,
+          }
+        : isTwoWheelVehicle && vehicleModel.trim()
+        ? { vehicleModel: vehicleModel.trim() }
+        : {}),
+      ...(activePromotion ? { promotion: activePromotion } : {}),
+    };
+
+    onAddToCart(cartItem);
   };
 
   return (
@@ -718,7 +772,7 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
             </div>
           )}
 
-          <div className="pt-4 border-t border-slate-100 flex items-center justify-between gap-4">
+          <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <div className="text-xs text-slate-500">
                 {activePromotion && promoBreakdown
@@ -737,13 +791,26 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
               </div>
             </div>
 
-            <button
-              type="submit"
-              className="px-6 py-3 min-h-[44px] bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-xs rounded-xl shadow-md transition-colors flex items-center gap-2 whitespace-nowrap shrink-0"
-            >
-              <span>Envoyer la commande</span>
-              <Check className="w-4 h-4" />
-            </button>
+            <div className="flex flex-wrap items-center gap-2.5">
+              {onAddToCart && (
+                <button
+                  type="button"
+                  onClick={handleAddConfiguredToCart}
+                  className="px-4 py-3 min-h-[44px] bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-900 font-semibold text-xs rounded-xl transition-colors flex items-center gap-2 whitespace-nowrap shrink-0"
+                >
+                  <ShoppingCart className="w-4 h-4 text-emerald-700" />
+                  <span>Ajouter au panier</span>
+                </button>
+              )}
+
+              <button
+                type="submit"
+                className="px-6 py-3 min-h-[44px] bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-xs rounded-xl shadow-md transition-colors flex items-center gap-2 whitespace-nowrap shrink-0"
+              >
+                <span>Envoyer la commande</span>
+                <Check className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         </form>
       </div>

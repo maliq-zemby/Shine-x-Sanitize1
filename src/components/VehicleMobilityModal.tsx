@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowRight, Bike, Car, Tag, X } from 'lucide-react';
+import { ArrowRight, Bike, Car, ShoppingCart, Tag, X } from 'lucide-react';
 import { Promotion, ServiceItem, VehicleCategory } from '../types';
 import { parsePromotionDiscount } from '../utils/promotions';
 
@@ -8,6 +8,7 @@ interface VehicleMobilityModalProps {
   appliedPromotion?: Promotion | null;
   onClearPromotion?: () => void;
   onSelectVehicleService: (service: ServiceItem) => void;
+  onQuickAddVehicleToCart?: (service: ServiceItem) => void;
   onClose: () => void;
 }
 
@@ -31,6 +32,7 @@ export const VehicleMobilityModal: React.FC<VehicleMobilityModalProps> = ({
   appliedPromotion = null,
   onClearPromotion,
   onSelectVehicleService,
+  onQuickAddVehicleToCart,
   onClose,
 }) => {
   const orderedTypes: VehicleCategory[] = ['velo', 'moto', '4_wheels'];
@@ -59,7 +61,7 @@ export const VehicleMobilityModal: React.FC<VehicleMobilityModalProps> = ({
             Véhicules & Mobilité
           </h2>
           <p className="text-xs text-slate-600 mt-1">
-            Choisissez précisément le type de véhicule à nettoyer à Libreville pour accéder au configurateur dédié.
+            Choisissez précisément le type de véhicule à nettoyer à Libreville pour accéder au configurateur dédié ou l&apos;ajouter au panier.
           </p>
         </div>
 
@@ -87,13 +89,15 @@ export const VehicleMobilityModal: React.FC<VehicleMobilityModalProps> = ({
           {orderedServices.map((srv) => {
             const meta = srv.vehicleType ? SUB_LABELS[srv.vehicleType] : null;
             return (
-              <button
+              <div
                 key={srv.id}
-                type="button"
-                onClick={() => onSelectVehicleService(srv)}
-                className="group text-left bg-white hover:border-emerald-700 border border-slate-200 rounded-2xl overflow-hidden shadow-sm transition-all flex flex-col justify-between focus:outline-none focus:ring-2 focus:ring-emerald-700"
+                className="group bg-white hover:border-emerald-700 border border-slate-200 rounded-2xl overflow-hidden shadow-sm transition-all flex flex-col justify-between"
               >
-                <div>
+                <button
+                  type="button"
+                  onClick={() => onSelectVehicleService(srv)}
+                  className="text-left focus:outline-none focus:ring-2 focus:ring-emerald-700"
+                >
                   <div className="h-44 overflow-hidden bg-slate-100">
                     <img
                       src={srv.image}
@@ -116,18 +120,35 @@ export const VehicleMobilityModal: React.FC<VehicleMobilityModalProps> = ({
                     </h3>
                     <p className="text-xs text-slate-600 line-clamp-2">{srv.description}</p>
                   </div>
-                </div>
+                </button>
 
-                <div className="px-4 pb-4 pt-2 border-t border-slate-100 flex items-center justify-between text-xs font-bold text-slate-900">
-                  <span className="tabular-nums text-emerald-800">
-                    Dès {srv.basePrice.toLocaleString()} XAF
-                  </span>
-                  <span className="inline-flex items-center gap-1 text-emerald-700 group-hover:translate-x-0.5 transition-transform">
-                    <span>Choisir</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </span>
+                <div className="px-4 pb-4 pt-2 border-t border-slate-100 space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => onSelectVehicleService(srv)}
+                    className="w-full flex items-center justify-between text-xs font-bold text-slate-900 py-1.5"
+                  >
+                    <span className="tabular-nums text-emerald-800">
+                      Dès {srv.basePrice.toLocaleString()} XAF
+                    </span>
+                    <span className="inline-flex items-center gap-1 text-emerald-700 group-hover:translate-x-0.5 transition-transform">
+                      <span>Configurer</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </span>
+                  </button>
+
+                  {onQuickAddVehicleToCart && (
+                    <button
+                      type="button"
+                      onClick={() => onQuickAddVehicleToCart(srv)}
+                      className="w-full py-2 min-h-[40px] px-3 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-900 text-[11px] font-semibold rounded-xl transition-colors flex items-center justify-center gap-1.5"
+                    >
+                      <ShoppingCart className="w-3.5 h-3.5 text-emerald-700" />
+                      <span>Ajouter au panier</span>
+                    </button>
+                  )}
                 </div>
-              </button>
+              </div>
             );
           })}
         </div>

@@ -140,7 +140,7 @@ service cloud.firestore {
 
     function isValidBooking(data) {
       return data.keys().hasAll(['id', 'ownerUid', 'serviceId', 'serviceName', 'serviceCategory', 'clientName', 'clientPhone', 'commune', 'address', 'clientCoords', 'details', 'clientOfferPrice', 'finalPrice', 'status', 'assignedAgents', 'gpsActive', 'clientGpsActive', 'beforePhotos', 'afterPhotos', 'paymentMethod', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['id', 'ownerUid', 'userId', 'clientId', 'serviceId', 'serviceName', 'serviceCategory', 'vehicleType', 'clientName', 'clientPhone', 'commune', 'address', 'clientCoords', 'details', 'clientOfferPrice', 'promoApplied', 'originalPrice', 'discountAmount', 'appliedPromotionId', 'appliedPromotionTitle', 'appliedPromotionDiscount', 'managerCounterPrice', 'priceAdjustmentNote', 'finalPrice', 'status', 'rejectionReason', 'refusalReason', 'refusedAt', 'assignedAgents', 'assignedAgentIds', 'assignedAgentDetails', 'gpsActive', 'clientGpsActive', 'agentGps', 'startedAt', 'completedAt', 'beforePhotos', 'afterPhotos', 'photosArchivedAt', 'agentsCongratulatedAt', 'agentsCongratulatedBy', 'paymentMethod', 'rating', 'review', 'reviewSubmittedAt', 'clientComment', 'clientCommentAt', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'ownerUid', 'userId', 'clientId', 'serviceId', 'serviceName', 'serviceCategory', 'vehicleType', 'items', 'services', 'clientName', 'clientPhone', 'commune', 'address', 'clientCoords', 'details', 'clientOfferPrice', 'promoApplied', 'originalPrice', 'discountAmount', 'appliedPromotionId', 'appliedPromotionTitle', 'appliedPromotionDiscount', 'managerCounterPrice', 'priceAdjustmentNote', 'finalPrice', 'status', 'rejectionReason', 'refusalReason', 'refusedAt', 'assignedAgents', 'assignedAgentIds', 'assignedAgentDetails', 'gpsActive', 'clientGpsActive', 'agentGps', 'startedAt', 'completedAt', 'beforePhotos', 'afterPhotos', 'photosArchivedAt', 'agentsCongratulatedAt', 'agentsCongratulatedBy', 'paymentMethod', 'rating', 'review', 'reviewSubmittedAt', 'clientComment', 'clientCommentAt', 'createdAt', 'updatedAt'])
         && isValidId(data.id)
         && data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128
         && (!('userId' in data) || data.userId == null || (data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128))
@@ -149,6 +149,8 @@ service cloud.firestore {
         && data.serviceName is string && data.serviceName.size() >= 2 && data.serviceName.size() <= 180
         && data.serviceCategory is string && data.serviceCategory.size() <= 40
         && (!('vehicleType' in data) || data.vehicleType == null || data.vehicleType in ['4_wheels', 'moto', 'velo'])
+        && (!('items' in data) || data.items == null || (data.items is list && data.items.size() <= 25 && (data.items.size() == 0 || data.items[0] is map)))
+        && (!('services' in data) || data.services == null || (data.services is list && data.services.size() <= 25 && (data.services.size() == 0 || data.services[0] is map)))
         && data.clientName is string && data.clientName.size() >= 1 && data.clientName.size() <= 120
         && data.clientPhone is string && data.clientPhone.size() >= 4 && data.clientPhone.size() <= 40
         && data.commune is string && data.commune.size() >= 2 && data.commune.size() <= 120
@@ -261,7 +263,7 @@ service cloud.firestore {
         && (!('recipientId' in data) || (data.recipientId is string && data.recipientId.size() >= 1 && data.recipientId.size() <= 128))
         && (!('orderId' in data) || (data.orderId is string && data.orderId.size() >= 1 && data.orderId.size() <= 128))
         && data.relatedId is string && data.relatedId.size() >= 1 && data.relatedId.size() <= 128
-        && (!('relatedTab' in data) || data.relatedTab in ['home', 'services', 'mes_reservations', 'suivi_commande', 'agent_space', 'admin'])
+        && (!('relatedTab' in data) || data.relatedTab in ['home', 'services', 'panier', 'mes_reservations', 'suivi_commande', 'agent_space', 'admin'])
         && data.actorUid is string && data.actorUid.size() >= 1 && data.actorUid.size() <= 128
         && (!('read' in data) || data.read is bool)
         && data.createdAt is string && data.createdAt.size() <= 64;

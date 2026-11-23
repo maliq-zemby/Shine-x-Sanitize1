@@ -27,6 +27,7 @@ import {
   ArrowRight,
   CalendarCheck,
   Car,
+  CheckCircle2,
   ChevronRight,
   ClipboardList,
   HardHat,
@@ -36,14 +37,17 @@ import {
   Megaphone,
   Navigation,
   ShieldCheck,
+  ShoppingCart,
   Sliders,
   Sparkles,
   Tag,
   Wrench,
+  X,
 } from 'lucide-react';
 import { AdminDashboardView } from './components/AdminDashboardView';
 import { AgentWorkspaceView } from './components/AgentWorkspaceView';
 import { AuthModal } from './components/AuthModal';
+import { CartView } from './components/CartView';
 import { CompanyValidationGate } from './components/CompanyValidationGate';
 import { ClientReservationsView } from './components/ClientReservationsView';
 import { ManagerOrdersView } from './components/ManagerOrdersView';
@@ -86,6 +90,7 @@ import {
   AppNotification,
   AssignedAgentInfo,
   Booking,
+  CartItem,
   GpsPoint,
   NotificationType,
   Promotion,
@@ -93,6 +98,7 @@ import {
   ServiceItem,
   UserProfile,
 } from './types';
+import { getBookingItems } from './utils/bookingItems';
 import {
   clearCachedProfileForUid,
   getPushPermissionState,
@@ -129,6 +135,8 @@ function getDashboardTabForRole(role: Role): ActiveTab {
 
 const STORAGE_KEYS = {
   services: 'sxs_alp_services_prod_v2',
+  cart: 'sxs_alp_cart_v1',
+  cartPromo: 'sxs_alp_cart_promo_v1',
 };
 
 const LEGACY_PROTOTYPE_KEYS = [
@@ -205,8 +213,23 @@ export default function App() {
   const [selectedService, setSelectedService] = useState<ServiceItem | null>(null);
   const [activePromotion, setActivePromotion] = useState<Promotion | null>(null);
   const [pendingBooking, setPendingBooking] = useState<Booking | null>(null);
+  const pendingBookingFromCartRef = useRef(false);
   const [showVehicleMobilityModal, setShowVehicleMobilityModal] = useState(false);
   const [commissionRate, setCommissionRate] = useState<number>(10);
+
+  const [cartItems, setCartItems] = useState<CartItem[]>(() =>
+    loadLocal<CartItem[]>(STORAGE_KEYS.cart, [])
+  );
+  const [cartPromotion, setCartPromotion] = useState<Promotion | null>(() =>
+    loadLocal<Promotion | null>(STORAGE_KEYS.cartPromo, null)
+  );
+  const [cartFeedback, setCartFeedback] = useState('');
+  const [isSubmittingCartOrder, setIsSubmittingCartOrder] = useState(false);
+  const [cartSubmitError, setCartSubmitError] = useState('');
+  const cartTotalUnits = cartItems.reduce(
+    (sum, item) => sum + Math.max(1, item.quantity || 1),
+    0
+  );
 
   // Determine effective role (authenticated profile takes precedence; Admin can also switch views)
   const currentRole: Role = userProfile
@@ -240,6 +263,33 @@ export default function App() {
       // ignore storage quota errors
     }
   }, [services]);
+
+  // Persist client shopping cart & cart promotion
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.cart, JSON.stringify(cartItems));
+    } catch {
+      // ignore storage quota errors
+    }
+  }, [cartItems]);
+
+  useEffect(() => {
+    try {
+      if (cartPromotion) {
+        localStorage.setItem(STORAGE_KEYS.cartPromo, JSON.stringify(cartPromotion));
+      } else {
+        localStorage.removeItem(STORAGE_KEYS.cartPromo);
+      }
+    } catch {
+      // ignore storage quota errors
+    }
+  }, [cartPromotion]);
+
+  useEffect(() => {
+    if (!cartFeedback) return;
+    const timer = setTimeout(() => setCartFeedback(''), 5000);
+    return () => clearTimeout(timer);
+  }, [cartFeedback]);
 
   const publishNotification = async (params: {
     type: NotificationType;
@@ -1166,6 +1216,8 @@ export default function App() {
         }
 
         if (pendingBooking) {
+          const wasFromCart = pendingBookingFromCartRef.current;
+          pendingBookingFromCartRef.current = false;
           const scopedBooking = buildScopedBookingPayload(
             pendingBooking,
             safeProfile.uid,
@@ -1175,8 +1227,12 @@ export default function App() {
           setPendingBooking(null);
           setBookings((prev) => [scopedBooking, ...prev]);
           setActiveTab('mes_reservations');
-          await setDoc(doc(db, 'bookings', scopedBooking.id), scopedBooking);
+          await persistNewBookingToFirestore(scopedBooking);
           await publishNewBookingNotification(scopedBooking, safeProfile.uid);
+          if (wasFromCart) {
+            setCartItems([]);
+            setCartPromotion(null);
+          }
         } else {
           setActiveTab(getDashboardTabForRole(safeProfile.role));
         }
@@ -1246,13 +1302,17 @@ export default function App() {
           }
         : undefined;
 
+    const cleanItems = getBookingItems(rawBooking);
+
     const payload: Booking = {
       ...rawBooking,
       ownerUid: uid,
       userId: uid,
+      clientId: uid,
       serviceId: String(rawBooking.serviceId || '').slice(0, 64),
       serviceName: (safeServiceName.length >= 2 ? safeServiceName : 'Service').slice(0, 180),
       serviceCategory: rawBooking.serviceCategory,
+      ...(cleanItems.length > 0 ? { items: cleanItems.slice(0, 25) } : {}),
       clientName: safeName,
       clientPhone: safePhone,
       commune: (safeCommune.length >= 2 ? safeCommune : 'Libreville').slice(0, 120),
@@ -1282,8 +1342,35 @@ export default function App() {
     if (!normalizedPromo) {
       delete payload.promoApplied;
     }
-    delete payload.clientId;
+    if (cleanItems.length === 0) {
+      delete payload.items;
+    }
+    delete payload.services;
     return payload;
+  };
+
+  const persistNewBookingToFirestore = async (scopedBooking: Booking) => {
+    try {
+      await setDoc(doc(db, 'bookings', scopedBooking.id), scopedBooking);
+    } catch (error) {
+      const code = (error as { code?: string })?.code || '';
+      const msg = error instanceof Error ? error.message : String(error || '');
+      const isPermDenied =
+        code === 'permission-denied' ||
+        msg.includes('permission-denied') ||
+        msg.includes('Missing or insufficient permissions');
+
+      if (isPermDenied) {
+        // Fallback compatibilité si les règles Firestore déployées n'incluent pas encore clientId ou items au top-level
+        const compatPayload: Booking = { ...scopedBooking };
+        delete compatPayload.clientId;
+        delete compatPayload.items;
+        delete compatPayload.services;
+        await setDoc(doc(db, 'bookings', scopedBooking.id), compatPayload);
+        return;
+      }
+      throw error;
+    }
   };
 
   const publishNewBookingNotification = async (scopedBooking: Booking, actorUid?: string) => {
@@ -1316,6 +1403,7 @@ export default function App() {
   const handleCreateBooking = async (newBooking: Booking) => {
     const activeAuthUser = auth.currentUser || firebaseUser;
     if (!activeAuthUser || !userProfile) {
+      pendingBookingFromCartRef.current = false;
       setPendingBooking(newBooking);
       setSelectedService(null);
       setActivePromotion(null);
@@ -1339,13 +1427,204 @@ export default function App() {
 
     try {
       await activeAuthUser.getIdToken();
-      await setDoc(doc(db, 'bookings', scopedBooking.id), scopedBooking);
+      await persistNewBookingToFirestore(scopedBooking);
       await publishNewBookingNotification(scopedBooking);
     } catch (error) {
       setBookings((prev) => prev.filter((b) => b.id !== scopedBooking.id));
       handleFirestoreError(error, OperationType.CREATE, `bookings/${scopedBooking.id}`);
     }
   };
+
+  const handleAddConfiguredItemToCart = (item: CartItem) => {
+    setCartSubmitError('');
+    const normalizedOpts = [...(item.options || [])].sort().join('|');
+    setCartItems((prev) => {
+      const existingIdx = prev.findIndex(
+        (existing) =>
+          existing.serviceId === item.serviceId &&
+          (existing.material || '') === (item.material || '') &&
+          (existing.condition || '') === (item.condition || '') &&
+          (existing.vehicleBrand || '') === (item.vehicleBrand || '') &&
+          (existing.vehicleModel || '') === (item.vehicleModel || '') &&
+          (existing.vehicleSeats || 0) === (item.vehicleSeats || 0) &&
+          [...(existing.options || [])].sort().join('|') === normalizedOpts
+      );
+      if (existingIdx >= 0) {
+        return prev.map((existing, idx) => {
+          if (idx !== existingIdx) return existing;
+          const nextQty = Math.min(20, (existing.quantity || 1) + (item.quantity || 1));
+          return {
+            ...existing,
+            quantity: nextQty,
+            unitPrice: item.unitPrice,
+            totalPrice: nextQty * item.unitPrice,
+            promotion: item.promotion || existing.promotion,
+          };
+        });
+      }
+      return [...prev.slice(0, 24), { ...item, totalPrice: item.unitPrice * (item.quantity || 1) }];
+    });
+    if (item.promotion) {
+      setCartPromotion((prev) => prev || item.promotion || null);
+    }
+    setSelectedService(null);
+    setActivePromotion(null);
+    setCartFeedback(`« ${item.serviceName} » ajouté au panier.`);
+  };
+
+  const handleQuickAddServiceToCart = (
+    service: ServiceItem,
+    promoOverride?: Promotion | null
+  ) => {
+    const appliedPromo = promoOverride ?? activePromotion;
+    const defaultAgents =
+      service.vehicleType === 'moto' || service.vehicleType === 'velo'
+        ? 1
+        : service.category === 'BTP'
+        ? 4
+        : 2;
+    const cartItem: CartItem = {
+      cartItemId: `cart-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
+      serviceId: service.id,
+      serviceName: service.name,
+      serviceCategory: service.category,
+      ...(service.vehicleType ? { vehicleType: service.vehicleType } : {}),
+      quantity: 1,
+      unitPrice: service.basePrice,
+      totalPrice: service.basePrice,
+      material: service.materials[0] || '',
+      condition: 'Moyen (Taches visibles)',
+      options: [],
+      agentsCount: defaultAgents,
+      ...(service.vehicleType === '4_wheels' ? { vehicleBrand: 'Toyota', vehicleSeats: 5 } : {}),
+      image: service.image,
+      duration: service.duration,
+      ...(appliedPromo ? { promotion: appliedPromo } : {}),
+    };
+    handleAddConfiguredItemToCart(cartItem);
+  };
+
+  const handleUpdateCartQuantity = (cartItemId: string, nextQuantity: number) => {
+    const clamped = Math.max(1, Math.min(20, Math.round(nextQuantity || 1)));
+    setCartItems((prev) =>
+      prev.map((item) =>
+        item.cartItemId === cartItemId
+          ? { ...item, quantity: clamped, totalPrice: clamped * item.unitPrice }
+          : item
+      )
+    );
+  };
+
+  const handleRemoveCartItem = (cartItemId: string) => {
+    setCartItems((prev) => prev.filter((item) => item.cartItemId !== cartItemId));
+  };
+
+  const handleClearCart = () => {
+    setCartItems([]);
+    setCartPromotion(null);
+    setCartSubmitError('');
+  };
+
+  const handleSubmitCartOrder = async (newBooking: Booking) => {
+    setCartSubmitError('');
+    const activeAuthUser = auth.currentUser || firebaseUser;
+    if (!activeAuthUser || !userProfile) {
+      pendingBookingFromCartRef.current = true;
+      setPendingBooking(newBooking);
+      setShowAuthModal(true);
+      return;
+    }
+
+    if (isAccountBanned) {
+      setCartSubmitError('Votre compte est suspendu.');
+      return;
+    }
+
+    const scopedBooking = buildScopedBookingPayload(
+      newBooking,
+      activeAuthUser.uid,
+      userProfile.displayName,
+      userProfile.phone
+    );
+
+    setIsSubmittingCartOrder(true);
+    try {
+      await activeAuthUser.getIdToken();
+      await persistNewBookingToFirestore(scopedBooking);
+      setBookings((prev) => [scopedBooking, ...prev.filter((b) => b.id !== scopedBooking.id)]);
+      await publishNewBookingNotification(scopedBooking);
+      handleClearCart();
+      setActiveTab('mes_reservations');
+    } catch (error) {
+      console.error('[handleSubmitCartOrder] Failed to create cart booking:', {
+        bookingId: scopedBooking.id,
+        error,
+      });
+      setCartSubmitError(
+        formatBookingUpdateError(
+          error,
+          "Impossible d'enregistrer votre commande groupée dans Firestore."
+        )
+      );
+    } finally {
+      setIsSubmittingCartOrder(false);
+    }
+  };
+
+  // Finalise automatiquement une commande en attente (panier ou simple) après connexion d'un compte existant
+  useEffect(() => {
+    if (
+      !pendingBooking ||
+      !firebaseUser ||
+      !userProfile ||
+      verifiedRoleUid !== firebaseUser.uid ||
+      completingOnboardingUidRef.current !== null ||
+      isAccountBanned ||
+      isCompanyBlocked
+    ) {
+      return;
+    }
+
+    const queued = pendingBooking;
+    const wasFromCart = pendingBookingFromCartRef.current;
+    pendingBookingFromCartRef.current = false;
+    setPendingBooking(null);
+
+    const scopedBooking = buildScopedBookingPayload(
+      queued,
+      firebaseUser.uid,
+      userProfile.displayName,
+      userProfile.phone
+    );
+
+    if (wasFromCart) setIsSubmittingCartOrder(true);
+    firebaseUser
+      .getIdToken()
+      .then(() => persistNewBookingToFirestore(scopedBooking))
+      .then(async () => {
+        setBookings((prev) => [scopedBooking, ...prev.filter((b) => b.id !== scopedBooking.id)]);
+        await publishNewBookingNotification(scopedBooking, firebaseUser.uid);
+        if (wasFromCart) {
+          handleClearCart();
+        }
+        setActiveTab('mes_reservations');
+      })
+      .catch((error) => {
+        console.error('[pendingBooking] Auto-submit after login failed:', error);
+        if (wasFromCart) {
+          setCartSubmitError(
+            formatBookingUpdateError(
+              error,
+              "Impossible d'enregistrer votre commande après connexion."
+            )
+          );
+        }
+      })
+      .finally(() => {
+        if (wasFromCart) setIsSubmittingCartOrder(false);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingBooking, firebaseUser, userProfile, verifiedRoleUid, isAccountBanned, isCompanyBlocked]);
 
   const persistBookingPatch = async (bookingId: string, patch: Partial<Booking>) => {
     const updatedAt = new Date().toISOString();
@@ -2722,6 +3001,24 @@ export default function App() {
 
             <button
               type="button"
+              onClick={() => setActiveTab('panier')}
+              className={`whitespace-nowrap shrink-0 py-1 inline-flex items-center gap-1.5 transition-colors ${
+                activeTab === 'panier'
+                  ? 'text-emerald-800 font-semibold border-b-2 border-emerald-700'
+                  : 'hover:text-slate-900'
+              }`}
+            >
+              <ShoppingCart className="w-4 h-4" />
+              <span>Panier</span>
+              {cartTotalUnits > 0 && (
+                <span className="px-1.5 py-0.5 rounded-md bg-emerald-700 text-white text-[10px] font-bold tabular-nums leading-none">
+                  {cartTotalUnits}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
               onClick={() => setActiveTab('mes_reservations')}
               className={`whitespace-nowrap shrink-0 py-1 transition-colors ${
                 activeTab === 'mes_reservations'
@@ -2775,8 +3072,33 @@ export default function App() {
             )}
           </nav>
 
-          {/* Zone 3: PWA Install / Notification Bell / Auth / Role Switcher */}
+          {/* Zone 3: Panier / PWA Install / Notification Bell / Auth / Role Switcher */}
           <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setActiveTab('panier')}
+              aria-label={`Ouvrir le panier (${cartTotalUnits} prestation${cartTotalUnits > 1 ? 's' : ''})`}
+              className={`px-2.5 py-2 min-h-[40px] rounded-xl border text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors ${
+                activeTab === 'panier'
+                  ? 'bg-emerald-700 border-emerald-700 text-white'
+                  : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-800'
+              }`}
+            >
+              <ShoppingCart className="w-4 h-4 shrink-0" />
+              <span className="hidden sm:inline">Panier</span>
+              {cartTotalUnits > 0 && (
+                <span
+                  className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold tabular-nums leading-none ${
+                    activeTab === 'panier'
+                      ? 'bg-white text-emerald-800'
+                      : 'bg-emerald-700 text-white'
+                  }`}
+                >
+                  {cartTotalUnits}
+                </span>
+              )}
+            </button>
+
             <PWAInstallButton />
 
             {firebaseUser && userProfile && (
@@ -2870,6 +3192,30 @@ export default function App() {
 
           <button
             type="button"
+            onClick={() => setActiveTab('panier')}
+            className={`px-3 py-2 min-h-[40px] rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors ${
+              activeTab === 'panier'
+                ? 'bg-emerald-700 text-white shadow-xs'
+                : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+            }`}
+          >
+            <ShoppingCart className="w-3.5 h-3.5" />
+            <span>Panier</span>
+            {cartTotalUnits > 0 && (
+              <span
+                className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold tabular-nums leading-none ${
+                  activeTab === 'panier'
+                    ? 'bg-white text-emerald-800'
+                    : 'bg-emerald-700 text-white'
+                }`}
+              >
+                {cartTotalUnits}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
             onClick={() => setActiveTab('mes_reservations')}
             className={`px-3 py-2 min-h-[40px] rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors ${
               activeTab === 'mes_reservations'
@@ -2940,6 +3286,39 @@ export default function App() {
 
       {/* MAIN CONTENT */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 pb-10">
+        {cartFeedback && activeTab !== 'panier' && (
+          <div
+            role="status"
+            className="mb-6 bg-emerald-50 border border-emerald-200 rounded-2xl px-4 py-3 text-xs text-emerald-950 flex flex-wrap items-center justify-between gap-3 shadow-xs"
+          >
+            <div className="flex items-center gap-2 font-medium">
+              <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+              <span>{cartFeedback}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setCartFeedback('');
+                  setActiveTab('panier');
+                }}
+                className="px-3.5 py-1.5 min-h-[36px] bg-emerald-700 hover:bg-emerald-800 text-white font-semibold rounded-xl transition-colors inline-flex items-center gap-1.5"
+              >
+                <ShoppingCart className="w-3.5 h-3.5" />
+                <span>Ouvrir le panier ({cartTotalUnits})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setCartFeedback('')}
+                aria-label="Fermer la notification du panier"
+                className="p-1 text-emerald-700 hover:text-emerald-950"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* ==================== ACCUEIL ==================== */}
         {activeTab === 'home' && (
           <div className="space-y-10">
@@ -3307,7 +3686,7 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className="p-5 pt-0">
+                    <div className="p-5 pt-0 space-y-2">
                       <button
                         type="button"
                         onClick={() => {
@@ -3318,6 +3697,15 @@ export default function App() {
                       >
                         <Sliders className="w-3.5 h-3.5" />
                         <span>Configurer & Réserver</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleQuickAddServiceToCart(service, null)}
+                        className="w-full py-2.5 min-h-[44px] px-4 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-900 text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-2"
+                      >
+                        <ShoppingCart className="w-3.5 h-3.5 text-emerald-700" />
+                        <span>Ajouter au panier</span>
                       </button>
                     </div>
                   </div>
@@ -3428,7 +3816,7 @@ export default function App() {
                       <p className="text-xs text-slate-600 leading-relaxed">{service.description}</p>
                     </div>
                   </div>
-                  <div className="p-5 pt-0">
+                  <div className="p-5 pt-0 space-y-2">
                     <button
                       type="button"
                       onClick={() => setSelectedService(service)}
@@ -3436,11 +3824,41 @@ export default function App() {
                     >
                       Lancer le Configurateur
                     </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleQuickAddServiceToCart(service)}
+                      className="w-full py-2.5 min-h-[44px] px-4 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-900 text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-2"
+                    >
+                      <ShoppingCart className="w-3.5 h-3.5 text-emerald-700" />
+                      <span>Ajouter au panier</span>
+                    </button>
                   </div>
                 </div>
               ))}
             </div>
           </div>
+        )}
+
+        {/* ==================== PANIER CLIENT ==================== */}
+        {activeTab === 'panier' && (
+          <CartView
+            items={cartItems}
+            catalogServices={services}
+            availablePromotions={approvedPromotions}
+            selectedCartPromotion={cartPromotion}
+            ownerUid={firebaseUser?.uid || ''}
+            defaultClientName={userProfile?.displayName || ''}
+            defaultClientPhone={userProfile?.phone || '+241 '}
+            isSubmitting={isSubmittingCartOrder}
+            submitError={cartSubmitError}
+            onSelectCartPromotion={setCartPromotion}
+            onUpdateQuantity={handleUpdateCartQuantity}
+            onRemoveItem={handleRemoveCartItem}
+            onClearCart={handleClearCart}
+            onOpenCatalog={() => setActiveTab('services')}
+            onSubmitCartOrder={handleSubmitCartOrder}
+          />
         )}
 
         {/* ==================== MES RÉSERVATIONS (ISOLATION STRICTE PAR CLIENT) ==================== */}
@@ -3576,6 +3994,11 @@ export default function App() {
             setShowVehicleMobilityModal(false);
             setSelectedService(srv);
           }}
+          onQuickAddVehicleToCart={(srv) => {
+            handleQuickAddServiceToCart(srv);
+            setShowVehicleMobilityModal(false);
+            setActivePromotion(null);
+          }}
           onClose={() => {
             setShowVehicleMobilityModal(false);
             setActivePromotion(null);
@@ -3597,6 +4020,7 @@ export default function App() {
             setActivePromotion(null);
           }}
           onSubmitBooking={handleCreateBooking}
+          onAddToCart={handleAddConfiguredItemToCart}
         />
       )}
 

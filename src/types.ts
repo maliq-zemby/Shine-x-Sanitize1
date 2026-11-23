@@ -111,6 +111,30 @@ export interface AssignedAgentInfo {
   commune?: string;
 }
 
+export interface BookingServiceItem {
+  serviceId: string;
+  serviceName: string;
+  serviceCategory: ServiceItem['category'];
+  vehicleType?: VehicleCategory;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+  material?: string;
+  condition?: string;
+  options?: string[];
+  agentsCount?: number;
+  vehicleBrand?: string;
+  vehicleModel?: string;
+  vehicleSeats?: number;
+  image?: string;
+}
+
+export interface CartItem extends BookingServiceItem {
+  cartItemId: string;
+  duration?: string;
+  promotion?: Promotion | null;
+}
+
 export interface Booking {
   id: string;
   ownerUid: string;
@@ -118,8 +142,10 @@ export interface Booking {
   clientId?: string;
   serviceId: string;
   serviceName: string;
-  serviceCategory: ServiceItem['category'];
+  serviceCategory: ServiceItem['category'] | 'Multi-services';
   vehicleType?: VehicleCategory;
+  items?: BookingServiceItem[];
+  services?: BookingServiceItem[];
   clientName: string;
   clientPhone: string;
   commune: string;
@@ -135,6 +161,7 @@ export interface Booking {
     vehicleBrand?: string;
     vehicleModel?: string;
     vehicleSeats?: number;
+    cartItems?: BookingServiceItem[];
   };
   clientOfferPrice: number;
   promoApplied?: BookingPromoApplied | null;
@@ -187,6 +214,7 @@ export type NotificationType =
 export type ActiveTabId =
   | 'home'
   | 'services'
+  | 'panier'
   | 'mes_reservations'
   | 'suivi_commande'
   | 'agent_space'

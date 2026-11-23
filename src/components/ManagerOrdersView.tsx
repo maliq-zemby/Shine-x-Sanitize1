@@ -25,6 +25,7 @@ import {
 import { Booking, GpsPoint, Promotion, ServiceItem, UserProfile } from '../types';
 import { useReverseGeocodedNeighborhood } from '../utils/geocoding';
 import { getBookingPromoInfo } from '../utils/promotions';
+import { BookingItemsList } from './BookingItemsList';
 import { LiveGpsMap } from './LiveGpsMap';
 import { WhatsAppComposerModal } from './WhatsAppComposerModal';
 
@@ -803,6 +804,8 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
                       </strong>
                     </span>
                   </div>
+
+                  <BookingItemsList booking={booking} compact />
 
                   {isEditingPrice && (
                     <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-4 space-y-3">

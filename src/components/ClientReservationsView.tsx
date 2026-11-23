@@ -19,6 +19,7 @@ import { MANAGER_DISPLAY_PHONE, MANAGER_NAME, MANAGER_WHATSAPP } from '../data/m
 import { AppNotification, Booking, GpsPoint } from '../types';
 import { HIGH_ACCURACY_GEO_OPTIONS, reverseGeocodeNeighborhood } from '../utils/geocoding';
 import { getBookingPromoInfo } from '../utils/promotions';
+import { BookingItemsList } from './BookingItemsList';
 import { LiveGpsMap } from './LiveGpsMap';
 import { WhatsAppComposerModal } from './WhatsAppComposerModal';
 
@@ -509,6 +510,8 @@ export const ClientReservationsView: React.FC<ClientReservationsViewProps> = ({
                   </p>
                 </div>
               )}
+
+              <BookingItemsList booking={booking} compact />
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
                 <div className="bg-slate-50 p-4 rounded-xl space-y-1.5">
