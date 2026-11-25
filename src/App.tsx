@@ -3086,7 +3086,7 @@ export default function App() {
                   : 'hover:text-slate-900'
               }`}
             >
-              Services & BTP
+              Services
             </button>
 
             <button
@@ -3641,11 +3641,8 @@ export default function App() {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
                 <h1 className="text-2xl font-bold text-slate-900">
-                  Catalogue des Services — {APP_OFFICIAL_NAME}
+                  Catalogue des Services
                 </h1>
-                <p className="text-xs text-slate-600 mt-1">
-                  Choisissez la prestation souhaitée, sélectionnez vos éléments et obtenez votre devis instantané en FCFA.
-                </p>
               </div>
             </div>
 
