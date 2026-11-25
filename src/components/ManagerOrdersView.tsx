@@ -1628,7 +1628,7 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
                 maxLength={120}
                 value={promoTitle}
                 onChange={(e) => setPromoTitle(e.target.value)}
-                placeholder="Ex: Spécial Week-end Nettoyage BTP & Villa"
+                placeholder="Ex: Spécial Week-end Nettoyage Canapés & Véhicules"
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-700"
               />
             </div>
@@ -1660,12 +1660,11 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
                   onChange={(e) => setPromoCategory(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs text-slate-900"
                 >
-                  <option value="Véhicules">Véhicules & Mobilité</option>
-                  <option value="BTP">Nettoyage après travaux BTP</option>
-                  <option value="Mobilier">Canapés & Mobilier</option>
-                  <option value="Professionnel">Bureaux & Vitres</option>
-                  <option value="Literie">Matelas & Literie</option>
-                  <option value="Sol">Sols & Carrelages</option>
+                  <option value="Véhicules">Véhicules à 4 roues</option>
+                  <option value="Mobilier">Canapés &amp; Assises</option>
+                  <option value="Professionnel">Vitrerie (Baies &amp; Fenêtres)</option>
+                  <option value="Literie">Matelas &amp; Articles bébé</option>
+                  <option value="Sol">Tapis &amp; Moquettes</option>
                 </select>
               </div>
               <div className="space-y-1">
@@ -1793,12 +1792,11 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
                               onChange={(e) => setEditPromoCategory(e.target.value)}
                               className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900"
                             >
-                              <option value="Véhicules">Véhicules & Mobilité</option>
-                              <option value="BTP">Nettoyage après travaux BTP</option>
-                              <option value="Mobilier">Canapés & Mobilier</option>
-                              <option value="Professionnel">Bureaux & Vitres</option>
-                              <option value="Literie">Matelas & Literie</option>
-                              <option value="Sol">Sols & Carrelages</option>
+                              <option value="Véhicules">Véhicules à 4 roues</option>
+                              <option value="Mobilier">Canapés &amp; Assises</option>
+                              <option value="Professionnel">Vitrerie (Baies &amp; Fenêtres)</option>
+                              <option value="Literie">Matelas &amp; Articles bébé</option>
+                              <option value="Sol">Tapis &amp; Moquettes</option>
                             </select>
                           </div>
                           <div className="space-y-1">

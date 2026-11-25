@@ -155,15 +155,11 @@ export function getBookingPromoInfo(booking: Booking): BookingPromoApplied | nul
 /**
  * Associe automatiquement une promotion à un service exact du catalogue
  * d'après son titre (puis sa description / catégorie) :
- * - "lavage de voiture" / "4 roues" / "auto" / "suv" / "4x4" -> Véhicule à 4 Roues (srv-5)
- * - "moto" / "scooter" / "quad" -> Lavage Moto & Scooter (srv-6)
- * - "vélo" / "vtt" -> Entretien & Lavage Vélo (srv-7)
- * - "btp" / "travaux" / "chantier" -> Nettoyage après travaux BTP (srv-btp)
- * - "canapé" / "salon" / "fauteuil" -> Canapé & Salon Complet (srv-1)
- * - "matelas" / "literie" -> Matelas & Literie Hygiène Pro (srv-3)
- * - "tapis" / "moquette" -> Tapis & Moquettes Résidentiel (srv-4)
- * - "vitre" / "baie" -> Nettoyage Vitres & Baies Vitrées (srv-8)
- * - "bureau" -> Désinfection & Nettoyage Bureaux (srv-2)
+ * - "voiture" / "4 roues" / "citadine" / "berline" / "suv" / "pick-up" / "camion" -> Nettoyage Véhicules à 4 roues (srv-5)
+ * - "canapé" / "pouf" / "chaise" / "fauteuil" -> Canapés & Assises (srv-1)
+ * - "matelas" / "berceau" / "poussette" / "literie" -> Matelas & Articles bébé (srv-3)
+ * - "tapis" / "moquette" -> Tapis & Moquettes (srv-4)
+ * - "vitre" / "baie" / "fenêtre" -> Vitrerie (Baies & Fenêtres) (srv-8)
  */
 export function matchServiceForPromotion(
   promo: Promotion,
@@ -171,32 +167,21 @@ export function matchServiceForPromotion(
 ): ServiceItem | null {
   const haystack = normalizeText(`${promo.title} ${promo.description || ''}`);
 
-  if (/(moto|scooter|quad)/.test(haystack)) {
-    const moto = services.find((s) => s.vehicleType === 'moto' || s.id === 'srv-6');
-    if (moto) return moto;
-  }
-
-  if (/(velo|vtt|bicyclette)/.test(haystack)) {
-    const velo = services.find((s) => s.vehicleType === 'velo' || s.id === 'srv-7');
-    if (velo) return velo;
-  }
-
-  if (/(voiture|4 roues|quatre roues|auto|automobile|suv|4x4|berline|carrosserie|habitacle|lavage.*vehicule|vehicule)/.test(haystack)) {
-    const car = services.find((s) => s.vehicleType === '4_wheels' || s.id === 'srv-5');
+  if (
+    /(voiture|4 roues|quatre roues|auto|automobile|citadine|berline|suv|4x4|pick-?up|camion|habitacle|lavage.*vehicule|vehicule)/.test(
+      haystack
+    )
+  ) {
+    const car = services.find((s) => s.id === 'srv-5' || s.vehicleType === '4_wheels');
     if (car) return car;
   }
 
-  if (/(btp|chantier|apres travaux|travaux|ciment|renovation)/.test(haystack)) {
-    const btp = services.find((s) => s.category === 'BTP' || s.id === 'srv-btp');
-    if (btp) return btp;
-  }
-
-  if (/(canape|salon|fauteuil|divan|mobilier|sofa)/.test(haystack)) {
+  if (/(canape|pouf|chaise|fauteuil|salon|divan|mobilier|sofa)/.test(haystack)) {
     const sofa = services.find((s) => s.id === 'srv-1' || s.category === 'Mobilier');
     if (sofa) return sofa;
   }
 
-  if (/(matelas|literie|lit)/.test(haystack)) {
+  if (/(matelas|berceau|poussette|literie|lit|bebe)/.test(haystack)) {
     const matelas = services.find((s) => s.id === 'srv-3' || s.category === 'Literie');
     if (matelas) return matelas;
   }
@@ -206,14 +191,9 @@ export function matchServiceForPromotion(
     if (tapis) return tapis;
   }
 
-  if (/(vitre|baie|veranda|miroir)/.test(haystack)) {
-    const vitre = services.find((s) => s.id === 'srv-8');
+  if (/(vitre|vitrerie|baie|fenetre|veranda|miroir)/.test(haystack)) {
+    const vitre = services.find((s) => s.id === 'srv-8' || s.category === 'Professionnel');
     if (vitre) return vitre;
-  }
-
-  if (/(bureau|bureaux|professionnel|entreprise|locaux)/.test(haystack)) {
-    const bureau = services.find((s) => s.id === 'srv-2' || s.category === 'Professionnel');
-    if (bureau) return bureau;
   }
 
   // Repli sur la catégorie associée si elle désigne un service précis (hors Véhicules générique)

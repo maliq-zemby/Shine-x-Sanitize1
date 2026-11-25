@@ -3,16 +3,18 @@ import {
   AlertTriangle,
   ArrowRight,
   Check,
+  Info,
   Loader2,
   LocateFixed,
   Minus,
   Plus,
   ShoppingBag,
   ShoppingCart,
+  Sparkles,
   Tag,
   Trash2,
 } from 'lucide-react';
-import { COMMUNES } from '../data/mockData';
+import { COMMUNES, SUPPLEMENTAL_SERVICES, VEHICLE_4W_INTERIOR_NOTE } from '../data/mockData';
 import {
   CommuneGrandLibreville,
   DEFAULT_QUARTIER,
@@ -27,6 +29,7 @@ import {
   PaymentMethod,
   Promotion,
   ServiceItem,
+  SupplementalServiceOption,
 } from '../types';
 import {
   buildCartServiceSummary,
@@ -39,6 +42,7 @@ import { parsePromotionDiscount } from '../utils/promotions';
 
 interface CartViewProps {
   items: CartItem[];
+  selectedExtras: SupplementalServiceOption[];
   catalogServices: ServiceItem[];
   availablePromotions: Promotion[];
   selectedCartPromotion: Promotion | null;
@@ -48,6 +52,7 @@ interface CartViewProps {
   isSubmitting?: boolean;
   submitError?: string;
   onSelectCartPromotion: (promo: Promotion | null) => void;
+  onToggleExtra: (extra: SupplementalServiceOption) => void;
   onUpdateQuantity: (cartItemId: string, nextQuantity: number) => void;
   onRemoveItem: (cartItemId: string) => void;
   onClearCart: () => void;
@@ -57,6 +62,7 @@ interface CartViewProps {
 
 export const CartView: React.FC<CartViewProps> = ({
   items,
+  selectedExtras,
   catalogServices,
   availablePromotions,
   selectedCartPromotion,
@@ -66,6 +72,7 @@ export const CartView: React.FC<CartViewProps> = ({
   isSubmitting = false,
   submitError = '',
   onSelectCartPromotion,
+  onToggleExtra,
   onUpdateQuantity,
   onRemoveItem,
   onClearCart,
@@ -83,7 +90,7 @@ export const CartView: React.FC<CartViewProps> = ({
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('Airtel Money');
   const [hasManualOffer, setHasManualOffer] = useState(false);
 
-  const pricing = computeCartPricing(items, selectedCartPromotion, catalogServices);
+  const pricing = computeCartPricing(items, selectedCartPromotion, catalogServices, selectedExtras);
   const [clientOfferPrice, setClientOfferPrice] = useState<number>(pricing.finalTotal || 1000);
   const [localError, setLocalError] = useState('');
 
@@ -215,9 +222,14 @@ export const CartView: React.FC<CartViewProps> = ({
         serializedItems.length > 1 ? `${it.serviceName} : ${opt}` : opt
       )
     );
+    const supplementalLines = selectedExtras.map((extra) =>
+      extra.price === 0
+        ? `Supplément : ${extra.label} (Gratuit · 0 FCFA)`
+        : `Supplément : ${extra.label} (+${extra.price.toLocaleString('fr-FR')} FCFA)`
+    );
     const maxAgents = Math.max(
       1,
-      ...serializedItems.map((it) => it.agentsCount || (it.serviceCategory === 'BTP' ? 4 : 2))
+      ...serializedItems.map((it) => it.agentsCount || (it.vehicleType === 'moto' ? 1 : 2))
     );
     const vehicleItem = serializedItems.find((it) => Boolean(it.vehicleBrand));
     const uniqueImages = Array.from(
@@ -263,7 +275,16 @@ export const CartView: React.FC<CartViewProps> = ({
             ? uniqueConditions.join(' · ').slice(0, 120)
             : 'Standard',
         stains: ['Prestations multiples du panier'],
-        options: combinedOptions.slice(0, 12),
+        options: [...combinedOptions, ...supplementalLines].slice(0, 12),
+        ...(selectedExtras.length > 0
+          ? {
+              supplementalServices: selectedExtras.map(({ id, label, price }) => ({
+                id,
+                label,
+                price,
+              })),
+            }
+          : {}),
         agentsCount: maxAgents,
         ...(vehicleItem?.vehicleBrand
           ? {
@@ -302,7 +323,7 @@ export const CartView: React.FC<CartViewProps> = ({
             <span>Mon Panier</span>
           </h1>
           <p className="text-xs text-slate-600 mt-1">
-            Regroupez plusieurs prestations (maison, BTP, véhicules) et validez-les en une seule commande suivie en temps réel.
+            Regroupez plusieurs prestations (canapés, tapis, matelas, vitrerie, véhicules) et validez-les en une seule commande suivie en temps réel.
           </p>
         </div>
 
@@ -359,7 +380,7 @@ export const CartView: React.FC<CartViewProps> = ({
           <div className="space-y-1.5 max-w-md mx-auto">
             <h2 className="text-base font-bold text-slate-900">Votre panier est vide</h2>
             <p className="text-xs text-slate-600 leading-relaxed">
-              Parcourez nos services (canapés, matelas, tapis, bureaux, nettoyage BTP, véhicules) et cliquez sur « Ajouter au panier » pour préparer votre commande groupée.
+              Parcourez nos services (canapés, tapis, matelas, vitrerie, véhicules à 4 roues), configurez vos quantités et ajoutez-les au panier pour préparer votre commande groupée.
             </p>
           </div>
           <button
@@ -450,17 +471,50 @@ export const CartView: React.FC<CartViewProps> = ({
                         {item.vehicleBrand && (
                           <div className="text-emerald-800 font-medium">
                             Véhicule : {item.vehicleBrand}
-                            {item.vehicleModel ? ` ${item.vehicleModel}` : ''} ·{' '}
-                            {item.vehicleSeats || 5} places
+                            {item.vehicleModel ? ` ${item.vehicleModel}` : ''}
+                            {typeof item.vehicleSeats === 'number'
+                              ? ` · ${item.vehicleSeats} places`
+                              : ''}
                           </div>
                         )}
-                        {item.options && item.options.length > 0 && (
-                          <div className="text-slate-500">
-                            Options : {item.options.join(', ')}
+                        {item.quoteLines && item.quoteLines.length > 0 ? (
+                          <div className="mt-1.5 bg-slate-50 border border-slate-200/80 rounded-lg p-2 space-y-1">
+                            {item.quoteLines.map((qLine, qIdx) => (
+                              <div
+                                key={`${qLine.serviceId}-${qIdx}`}
+                                className="flex items-center justify-between gap-3 text-[11px] text-slate-700"
+                              >
+                                <span className="truncate">
+                                  <strong className="text-emerald-800 tabular-nums">
+                                    {qLine.quantity * item.quantity}×
+                                  </strong>{' '}
+                                  {qLine.serviceName}{' '}
+                                  <span className="text-slate-500 tabular-nums">
+                                    ({qLine.unitPrice.toLocaleString('fr-FR')} FCFA)
+                                  </span>
+                                </span>
+                                <span className="font-bold text-slate-900 tabular-nums shrink-0">
+                                  {(qLine.totalPrice * item.quantity).toLocaleString('fr-FR')} FCFA
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          item.options &&
+                          item.options.length > 0 && (
+                            <div className="text-slate-500">
+                              Détail : {item.options.join(', ')}
+                            </div>
+                          )
+                        )}
+                        {(item.serviceId === 'srv-5' || item.vehicleType === '4_wheels') && (
+                          <div className="pt-1 flex items-start gap-1.5 text-[11px] font-medium text-amber-900">
+                            <Info className="w-3.5 h-3.5 text-amber-700 shrink-0 mt-0.5" />
+                            <span>{VEHICLE_4W_INTERIOR_NOTE}</span>
                           </div>
                         )}
                         <div className="text-[11px] text-slate-500 tabular-nums pt-0.5">
-                          Tarif unitaire : {item.unitPrice.toLocaleString('fr-FR')} XAF
+                          Devis unitaire configuré : {item.unitPrice.toLocaleString('fr-FR')} FCFA
                         </div>
                       </div>
                     </div>
@@ -513,6 +567,77 @@ export const CartView: React.FC<CartViewProps> = ({
                 </div>
               );
             })}
+
+            {/* Services supplémentaires inside Cart */}
+            <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 space-y-3 shadow-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-xs sm:text-sm font-bold text-slate-900">
+                  <Sparkles className="w-4 h-4 text-emerald-700 shrink-0" />
+                  <span>Services supplémentaires (optionnels)</span>
+                </div>
+                <span className="text-[11px] font-semibold text-emerald-800 tabular-nums">
+                  {selectedExtras.length > 0
+                    ? `${selectedExtras.length} option${selectedExtras.length > 1 ? 's' : ''} · ${
+                        pricing.extrasSubtotal === 0
+                          ? 'Gratuit (0 FCFA)'
+                          : `+${pricing.extrasSubtotal.toLocaleString('fr-FR')} FCFA`
+                      }`
+                    : 'Aucune option sélectionnée'}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {SUPPLEMENTAL_SERVICES.map((extra) => {
+                  const isSelected = selectedExtras.some((e) => e.id === extra.id);
+                  return (
+                    <button
+                      key={extra.id}
+                      type="button"
+                      disabled={isSubmitting}
+                      onClick={() => {
+                        setHasManualOffer(false);
+                        onToggleExtra(extra);
+                      }}
+                      aria-pressed={isSelected}
+                      className={`text-left px-3.5 py-2.5 min-h-[44px] rounded-xl border transition-colors flex items-start justify-between gap-2.5 ${
+                        isSelected
+                          ? 'bg-emerald-50 border-emerald-500 ring-1 ring-emerald-500/30'
+                          : 'bg-slate-50/70 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      <div className="flex items-start gap-2.5 min-w-0">
+                        <span
+                          className={`mt-0.5 w-4 h-4 rounded flex items-center justify-center shrink-0 border ${
+                            isSelected
+                              ? 'bg-emerald-700 border-emerald-700 text-white'
+                              : 'bg-white border-slate-300'
+                          }`}
+                        >
+                          {isSelected && <Check className="w-3 h-3" />}
+                        </span>
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold text-slate-900">{extra.label}</div>
+                          {extra.description && (
+                            <div className="text-[11px] text-slate-500 leading-snug">
+                              {extra.description}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <span
+                        className={`text-[11px] font-bold tabular-nums shrink-0 ${
+                          extra.price === 0 ? 'text-emerald-700' : 'text-slate-900'
+                        }`}
+                      >
+                        {extra.price === 0
+                          ? 'Gratuit (0 FCFA)'
+                          : `+${extra.price.toLocaleString('fr-FR')} FCFA`}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
 
             {/* Promotion Management Card inside Cart */}
             {pricing.activePromotion && pricing.promoApplied ? (
@@ -738,9 +863,36 @@ export const CartView: React.FC<CartViewProps> = ({
               <div className="flex items-center justify-between text-slate-600">
                 <span>Prestations sélectionnées ({pricing.totalUnits})</span>
                 <span className="font-semibold text-slate-900 tabular-nums">
-                  {pricing.rawSubtotal.toLocaleString('fr-FR')} XAF
+                  {pricing.rawItemsSubtotal.toLocaleString('fr-FR')} XAF
                 </span>
               </div>
+
+              {selectedExtras.length > 0 && (
+                <div className="pt-1.5 border-t border-slate-200/70 space-y-1">
+                  {selectedExtras.map((extra) => (
+                    <div key={extra.id} className="flex items-center justify-between text-slate-600">
+                      <span>+ {extra.label}</span>
+                      <span
+                        className={`font-semibold tabular-nums ${
+                          extra.price === 0 ? 'text-emerald-700' : 'text-slate-900'
+                        }`}
+                      >
+                        {extra.price === 0
+                          ? 'Gratuit (0 FCFA)'
+                          : `+${extra.price.toLocaleString('fr-FR')} FCFA`}
+                      </span>
+                    </div>
+                  ))}
+                  <div className="flex items-center justify-between text-slate-700 font-semibold">
+                    <span>Sous-total suppléments</span>
+                    <span className="tabular-nums">
+                      {pricing.extrasSubtotal === 0
+                        ? 'Gratuit (0 XAF)'
+                        : `+${pricing.extrasSubtotal.toLocaleString('fr-FR')} XAF`}
+                    </span>
+                  </div>
+                </div>
+              )}
 
               {pricing.promoApplied && pricing.discountAmount > 0 && (
                 <div className="flex items-center justify-between text-emerald-700 font-semibold">

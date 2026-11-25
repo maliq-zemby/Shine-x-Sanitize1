@@ -1,10 +1,24 @@
-import React, { useState } from 'react';
-import { Bike, Car, Check, LocateFixed, ShoppingCart, Tag, X } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import {
+  AlertTriangle,
+  Car,
+  Check,
+  Info,
+  LocateFixed,
+  Minus,
+  Plus,
+  Receipt,
+  ShoppingCart,
+  Sparkles,
+  Tag,
+  X,
+} from 'lucide-react';
 import {
   COMMUNES,
+  SUPPLEMENTAL_SERVICES,
+  VEHICLE_4W_INTERIOR_NOTE,
   VEHICLE_BRANDS,
-  VEHICLE_SEAT_OPTIONS,
-  getOptionPrice,
+  getServiceQuoteOptions,
 } from '../data/mockData';
 import {
   CommuneGrandLibreville,
@@ -13,7 +27,16 @@ import {
   QUARTIERS_GRAND_LIBREVILLE,
   matchLocalQuartier,
 } from '../data/quartiers';
-import { Booking, CartItem, GpsPoint, PaymentMethod, Promotion, ServiceItem } from '../types';
+import {
+  Booking,
+  BookingServiceItem,
+  CartItem,
+  GpsPoint,
+  PaymentMethod,
+  Promotion,
+  ServiceItem,
+  SupplementalServiceOption,
+} from '../types';
 import { HIGH_ACCURACY_GEO_OPTIONS } from '../utils/geocoding';
 import { buildBookingPromoApplied, computeDiscountedPrice } from '../utils/promotions';
 
@@ -23,10 +46,11 @@ interface ServiceConfiguratorModalProps {
   defaultClientName?: string;
   defaultClientPhone?: string;
   appliedPromotion?: Promotion | null;
+  initialIntent?: 'order' | 'cart';
   onRemovePromotion?: () => void;
   onClose: () => void;
   onSubmitBooking: (booking: Booking) => void;
-  onAddToCart?: (item: CartItem) => void;
+  onAddToCart?: (item: CartItem, selectedExtras?: SupplementalServiceOption[]) => void;
 }
 
 export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> = ({
@@ -35,13 +59,24 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
   defaultClientName = '',
   defaultClientPhone = '+241 ',
   appliedPromotion = null,
+  initialIntent = 'order',
   onRemovePromotion,
   onClose,
   onSubmitBooking,
   onAddToCart,
 }) => {
-  const isFourWheelVehicle = service.vehicleType === '4_wheels';
-  const isTwoWheelVehicle = service.vehicleType === 'moto' || service.vehicleType === 'velo';
+  const isFourWheelVehicle = service.id === 'srv-5' || service.vehicleType === '4_wheels';
+
+  const quoteOptions = getServiceQuoteOptions(service.id);
+
+  const [quantities, setQuantities] = useState<Record<string, number>>(() => {
+    const initial: Record<string, number> = {};
+    quoteOptions.forEach((opt) => {
+      initial[opt.id] = 0;
+    });
+    return initial;
+  });
+  const [selectedExtraIds, setSelectedExtraIds] = useState<string[]>([]);
 
   const [commune, setCommune] = useState(COMMUNES[0].name);
   const [selectedQuartierId, setSelectedQuartierId] = useState(DEFAULT_QUARTIER.id);
@@ -52,85 +87,71 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
   const [clientPhone, setClientPhone] = useState(defaultClientPhone);
   const [material, setMaterial] = useState(service.materials[0] || '');
   const [condition, setCondition] = useState('Moyen (Taches visibles)');
-  const [selectedOptions, setSelectedOptions] = useState<string[]>(
-    service.availableOptions[0] ? [service.availableOptions[0]] : []
-  );
-  const [agentsCount, setAgentsCount] = useState(
-    isTwoWheelVehicle ? 1 : service.category === 'BTP' ? 4 : 2
-  );
+  const [agentsCount, setAgentsCount] = useState(2);
 
   const [vehicleBrand, setVehicleBrand] = useState('Toyota');
   const [customBrand, setCustomBrand] = useState('');
   const [vehicleModel, setVehicleModel] = useState('');
-  const [vehicleSeats, setVehicleSeats] = useState<number>(5);
   const [promoRemoved, setPromoRemoved] = useState(false);
   const [hasManualOffer, setHasManualOffer] = useState(false);
+  const [clientOfferPrice, setClientOfferPrice] = useState<number>(0);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('Airtel Money');
+  const [selectionError, setSelectionError] = useState('');
 
   const activePromotion = !promoRemoved ? appliedPromotion : null;
 
-  const seatPriceDelta = (seats: number) => (seats >= 7 ? 7000 : seats === 2 ? -2000 : 0);
-  const baseAdjustedPrice = isFourWheelVehicle
-    ? service.basePrice + seatPriceDelta(vehicleSeats)
-    : service.basePrice;
+  const selectedQuoteLines = quoteOptions
+    .map((opt) => {
+      const qty = Math.max(0, Math.round(quantities[opt.id] || 0));
+      return {
+        ...opt,
+        quantity: qty,
+        subtotal: qty * opt.unitPrice,
+      };
+    })
+    .filter((line) => line.quantity > 0);
 
-  const optionsTotal = selectedOptions.reduce((sum, opt) => sum + getOptionPrice(opt), 0);
-  const recommendedPrice = baseAdjustedPrice + optionsTotal;
-  const promoBreakdown = activePromotion
-    ? computeDiscountedPrice(recommendedPrice, activePromotion)
-    : null;
-  const targetRecommendedOffer = promoBreakdown ? promoBreakdown.finalPrice : recommendedPrice;
+  const totalSelectedUnits = selectedQuoteLines.reduce((sum, line) => sum + line.quantity, 0);
+  const rawItemsTotal = selectedQuoteLines.reduce((sum, line) => sum + line.subtotal, 0);
+  const selectedExtras = SUPPLEMENTAL_SERVICES.filter((opt) =>
+    selectedExtraIds.includes(opt.id)
+  );
+  const extrasTotal = selectedExtras.reduce((sum, opt) => sum + opt.price, 0);
+  const rawQuoteTotal = rawItemsTotal > 0 ? rawItemsTotal + extrasTotal : 0;
 
-  const [clientOfferPrice, setClientOfferPrice] = useState(() => {
-    const initialOptionPrice = service.availableOptions[0]
-      ? getOptionPrice(service.availableOptions[0])
-      : 0;
-    const initialRaw = service.basePrice + initialOptionPrice;
-    return activePromotion
-      ? computeDiscountedPrice(initialRaw, activePromotion).finalPrice
-      : initialRaw;
-  });
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('Airtel Money');
+  const promoBreakdown =
+    activePromotion && rawQuoteTotal > 0
+      ? computeDiscountedPrice(rawQuoteTotal, activePromotion)
+      : null;
 
-  const computeRecommendedFor = (seats: number, options: string[], promo: Promotion | null) => {
-    const nextBase = isFourWheelVehicle
-      ? service.basePrice + seatPriceDelta(seats)
-      : service.basePrice;
-    const nextOpts = options.reduce((sum, opt) => sum + getOptionPrice(opt), 0);
-    const nextRaw = nextBase + nextOpts;
-    return promo ? computeDiscountedPrice(nextRaw, promo).finalPrice : nextRaw;
+  const targetRecommendedOffer =
+    rawQuoteTotal > 0 ? (promoBreakdown ? promoBreakdown.finalPrice : rawQuoteTotal) : 0;
+
+  useEffect(() => {
+    if (!hasManualOffer) {
+      setClientOfferPrice(targetRecommendedOffer);
+    }
+  }, [targetRecommendedOffer, hasManualOffer]);
+
+  const handleQuantityChange = (optionId: string, delta: number) => {
+    setSelectionError('');
+    setQuantities((prev) => {
+      const current = prev[optionId] || 0;
+      const next = Math.max(0, Math.min(20, current + delta));
+      return { ...prev, [optionId]: next };
+    });
   };
 
-  const handleSeatsChange = (seats: number) => {
-    const prevDelta = seatPriceDelta(vehicleSeats);
-    const nextDelta = seatPriceDelta(seats);
-    setVehicleSeats(seats);
-    if (!hasManualOffer) {
-      setClientOfferPrice(computeRecommendedFor(seats, selectedOptions, activePromotion));
-    } else {
-      setClientOfferPrice((prev) => Math.max(1000, prev - prevDelta + nextDelta));
-    }
-  };
-
-  const toggleOption = (opt: string) => {
-    const optionPrice = getOptionPrice(opt);
-    const exists = selectedOptions.includes(opt);
-    const nextOptions = exists
-      ? selectedOptions.filter((item) => item !== opt)
-      : [...selectedOptions, opt];
-    setSelectedOptions(nextOptions);
-    if (!hasManualOffer) {
-      setClientOfferPrice(computeRecommendedFor(vehicleSeats, nextOptions, activePromotion));
-    } else {
-      setClientOfferPrice((prev) =>
-        Math.max(1000, exists ? prev - optionPrice : prev + optionPrice)
-      );
-    }
+  const toggleExtra = (extraId: string) => {
+    setSelectedExtraIds((prev) =>
+      prev.includes(extraId) ? prev.filter((id) => id !== extraId) : [...prev, extraId]
+    );
   };
 
   const handleRemovePromo = () => {
     setPromoRemoved(true);
     setHasManualOffer(false);
-    setClientOfferPrice(recommendedPrice);
+    setClientOfferPrice(rawQuoteTotal);
     onRemovePromotion?.();
   };
 
@@ -184,26 +205,79 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
     );
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const buildQuotePayloadDetails = () => {
     const resolvedBrand =
       vehicleBrand === 'Autre marque' ? customBrand.trim() || 'Autre' : vehicleBrand;
+    const trimmedModel = vehicleModel.trim();
 
-    let fullServiceName = `${service.name} (${material})`;
+    const quoteSummaryParts = selectedQuoteLines.map((l) => `${l.quantity}× ${l.label}`);
+    let fullServiceName = `${service.name} : ${quoteSummaryParts.join(', ')}`;
     if (isFourWheelVehicle) {
-      const modelSuffix = vehicleModel.trim() ? ` ${vehicleModel.trim()}` : '';
-      fullServiceName = `Véhicule 4 roues — ${resolvedBrand}${modelSuffix} (${vehicleSeats} places)`;
-    } else if (isTwoWheelVehicle) {
-      const modelSuffix = vehicleModel.trim() ? ` — ${vehicleModel.trim()}` : '';
-      fullServiceName = `${service.name}${modelSuffix}`;
+      const modelSuffix = trimmedModel ? ` ${trimmedModel}` : '';
+      fullServiceName = `${service.name} (${resolvedBrand}${modelSuffix}) : ${quoteSummaryParts.join(', ')}`;
+    }
+    fullServiceName = fullServiceName.slice(0, 180);
+
+    const formattedOptions = selectedQuoteLines.map(
+      (line) =>
+        `${line.quantity}× ${line.label} (${line.unitPrice.toLocaleString('fr-FR')} FCFA) = ${line.subtotal.toLocaleString('fr-FR')} FCFA`
+    );
+
+    const supplementalLines = selectedExtras.map((extra) =>
+      extra.price === 0
+        ? `Supplément : ${extra.label} (Gratuit · 0 FCFA)`
+        : `Supplément : ${extra.label} (+${extra.price.toLocaleString('fr-FR')} FCFA)`
+    );
+
+    const quoteItems: BookingServiceItem[] = selectedQuoteLines.map((line) => ({
+      serviceId: service.id,
+      serviceName: line.label,
+      serviceCategory: service.category,
+      ...(service.vehicleType ? { vehicleType: service.vehicleType } : {}),
+      quantity: line.quantity,
+      unitPrice: line.unitPrice,
+      totalPrice: line.subtotal,
+      ...(material ? { material } : {}),
+      ...(condition ? { condition } : {}),
+      agentsCount,
+      ...(isFourWheelVehicle
+        ? {
+            vehicleBrand: resolvedBrand,
+            ...(trimmedModel ? { vehicleModel: trimmedModel } : {}),
+          }
+        : {}),
+      image: service.image,
+    }));
+
+    return {
+      resolvedBrand,
+      trimmedModel,
+      fullServiceName,
+      formattedOptions,
+      supplementalLines,
+      quoteItems,
+    };
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setSelectionError('');
+
+    if (selectedQuoteLines.length === 0 || rawItemsTotal <= 0) {
+      setSelectionError(
+        'Veuillez sélectionner au moins un élément (total > 0 FCFA) avant de valider la commande.'
+      );
+      return;
     }
 
-    const formattedOptions = selectedOptions.map((opt) => {
-      const optPrice = getOptionPrice(opt);
-      return optPrice === 0
-        ? `${opt} (Gratuit · 0 XAF)`
-        : `${opt} (+${optPrice.toLocaleString()} XAF)`;
-    });
+    const {
+      resolvedBrand,
+      trimmedModel,
+      fullServiceName,
+      formattedOptions,
+      supplementalLines,
+      quoteItems,
+    } = buildQuotePayloadDetails();
 
     const formattedAddress = address.trim()
       ? `${selectedQuartier.name} — ${address.trim()}`
@@ -217,8 +291,12 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
           neighborhood: selectedQuartier.label,
         };
 
-    const finalSubmittedOffer = Math.max(1000, Math.round(clientOfferPrice));
+    const finalSubmittedOffer = Math.max(
+      1000,
+      Math.round(clientOfferPrice > 0 ? clientOfferPrice : targetRecommendedOffer)
+    );
     const nowIso = new Date().toISOString();
+
     const newBooking: Booking = {
       id: `SHINE-${Math.floor(1000 + Math.random() * 9000)}`,
       ownerUid,
@@ -227,6 +305,7 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
       serviceName: fullServiceName,
       serviceCategory: service.category,
       ...(service.vehicleType ? { vehicleType: service.vehicleType } : {}),
+      items: quoteItems,
       clientName: clientName.trim() || defaultClientName,
       clientPhone: clientPhone.trim() || defaultClientPhone,
       commune: selectedQuartier.commune as CommuneGrandLibreville,
@@ -234,24 +313,27 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
       clientCoords,
       clientGpsActive: Boolean(detectedGps),
       details: {
-        material,
+        material: material || 'Standard',
         condition,
-        stains: isFourWheelVehicle
-          ? ['Boue / Poussière', 'Habitacle']
-          : service.category === 'BTP'
-          ? ['Poussière ciment', 'Traces peinture']
-          : ['Taches courantes'],
-        options: formattedOptions,
+        stains: isFourWheelVehicle ? ['Habitacle'] : ['Taches courantes'],
+        options: [...formattedOptions, ...supplementalLines].slice(0, 12),
+        ...(selectedExtras.length > 0
+          ? {
+              supplementalServices: selectedExtras.map(({ id, label, price }) => ({
+                id,
+                label,
+                price,
+              })),
+            }
+          : {}),
         agentsCount,
         ...(isFourWheelVehicle
           ? {
               vehicleBrand: resolvedBrand,
-              ...(vehicleModel.trim() ? { vehicleModel: vehicleModel.trim() } : {}),
-              vehicleSeats,
+              ...(trimmedModel ? { vehicleModel: trimmedModel } : {}),
             }
-          : isTwoWheelVehicle && vehicleModel.trim()
-          ? { vehicleModel: vehicleModel.trim() }
           : {}),
+        cartItems: quoteItems,
       },
       clientOfferPrice: finalSubmittedOffer,
       ...(activePromotion && promoBreakdown
@@ -276,26 +358,19 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
 
   const handleAddConfiguredToCart = () => {
     if (!onAddToCart) return;
-    const resolvedBrand =
-      vehicleBrand === 'Autre marque' ? customBrand.trim() || 'Autre' : vehicleBrand;
+    setSelectionError('');
 
-    let fullServiceName = `${service.name} (${material})`;
-    if (isFourWheelVehicle) {
-      const modelSuffix = vehicleModel.trim() ? ` ${vehicleModel.trim()}` : '';
-      fullServiceName = `Véhicule 4 roues — ${resolvedBrand}${modelSuffix} (${vehicleSeats} places)`;
-    } else if (isTwoWheelVehicle) {
-      const modelSuffix = vehicleModel.trim() ? ` — ${vehicleModel.trim()}` : '';
-      fullServiceName = `${service.name}${modelSuffix}`;
+    if (selectedQuoteLines.length === 0 || rawItemsTotal <= 0) {
+      setSelectionError(
+        'Veuillez sélectionner au moins un élément (total > 0 FCFA) avant d’ajouter ce service au panier.'
+      );
+      return;
     }
 
-    const formattedOptions = selectedOptions.map((opt) => {
-      const optPrice = getOptionPrice(opt);
-      return optPrice === 0
-        ? `${opt} (Gratuit · 0 XAF)`
-        : `${opt} (+${optPrice.toLocaleString()} XAF)`;
-    });
+    const { resolvedBrand, trimmedModel, fullServiceName, formattedOptions, quoteItems } =
+      buildQuotePayloadDetails();
 
-    const unitPrice = Math.max(1000, Math.round(recommendedPrice));
+    const unitPrice = Math.max(1000, Math.round(rawItemsTotal));
     const cartItem: CartItem = {
       cartItemId: `cart-${service.id}-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
       serviceId: service.id,
@@ -308,22 +383,20 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
       material,
       condition,
       options: formattedOptions,
+      quoteLines: quoteItems,
       agentsCount,
       duration: service.duration,
       image: service.image,
       ...(isFourWheelVehicle
         ? {
             vehicleBrand: resolvedBrand,
-            ...(vehicleModel.trim() ? { vehicleModel: vehicleModel.trim() } : {}),
-            vehicleSeats,
+            ...(trimmedModel ? { vehicleModel: trimmedModel } : {}),
           }
-        : isTwoWheelVehicle && vehicleModel.trim()
-        ? { vehicleModel: vehicleModel.trim() }
         : {}),
       ...(activePromotion ? { promotion: activePromotion } : {}),
     };
 
-    onAddToCart(cartItem);
+    onAddToCart(cartItem, selectedExtras);
   };
 
   return (
@@ -354,16 +427,24 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
           </div>
         </div>
 
-        {activePromotion && promoBreakdown && (
+        {/* NOTE IMPORTANTE UNIQUEMENT POUR VÉHICULES À 4 ROUES */}
+        {isFourWheelVehicle && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 flex items-start gap-2.5 text-xs text-amber-950">
+            <Info className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+            <span className="font-semibold">{VEHICLE_4W_INTERIOR_NOTE}</span>
+          </div>
+        )}
+
+        {activePromotion && (
           <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-start gap-2.5 text-xs text-emerald-950">
               <Tag className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
               <div>
                 <div className="font-bold">
-                  Promotion appliquée : {promoBreakdown.shortLabel} · {activePromotion.title}
+                  Promotion active : {activePromotion.discountLabel} · {activePromotion.title}
                 </div>
                 <div className="text-[11px] text-emerald-800">
-                  Offre {activePromotion.companyName} — Réduction calculée automatiquement sur votre total.
+                  Offre {activePromotion.companyName} — La remise est calculée automatiquement sur votre devis.
                 </div>
               </div>
             </div>
@@ -377,15 +458,234 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-5">
+          {/* CONFIGURATEUR DE DEVIS EN TEMPS RÉEL (SÉLECTEUR DE QUANTITÉ 0, 1, 2...) */}
+          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs font-bold text-slate-900">
+                <Receipt className="w-4 h-4 text-emerald-700 shrink-0" />
+                <span>Sélectionnez les éléments et quantités (Devis en FCFA)</span>
+              </div>
+              <span className="text-[11px] font-semibold text-emerald-800 tabular-nums">
+                {totalSelectedUnits} élément{totalSelectedUnits > 1 ? 's' : ''} sélectionné
+                {totalSelectedUnits > 1 ? 's' : ''}
+              </span>
+            </div>
+
+            <div className="divide-y divide-slate-200 bg-white border border-slate-200 rounded-xl overflow-hidden">
+              {quoteOptions.map((opt) => {
+                const qty = Math.max(0, Math.round(quantities[opt.id] || 0));
+                const lineSubtotal = qty * opt.unitPrice;
+                const isActive = qty > 0;
+
+                return (
+                  <div
+                    key={opt.id}
+                    className={`px-3.5 py-3 flex items-center justify-between gap-3 transition-colors ${
+                      isActive ? 'bg-emerald-50/50' : 'bg-white'
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <div className="text-xs sm:text-sm font-semibold text-slate-900">
+                        {opt.label}
+                      </div>
+                      <div className="text-[11px] text-slate-500 tabular-nums">
+                        {opt.unitPrice.toLocaleString('fr-FR')} FCFA / unité
+                        {isActive && (
+                          <span className="ml-2 font-bold text-emerald-800">
+                            · Sous-total : {lineSubtotal.toLocaleString('fr-FR')} FCFA
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="inline-flex items-center border border-slate-200 rounded-xl bg-slate-50 p-0.5 shrink-0">
+                      <button
+                        type="button"
+                        aria-label={`Diminuer la quantité pour ${opt.label}`}
+                        disabled={qty <= 0}
+                        onClick={() => handleQuantityChange(opt.id, -1)}
+                        className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-700 hover:bg-white disabled:opacity-35 transition-colors"
+                      >
+                        <Minus className="w-3.5 h-3.5" />
+                      </button>
+                      <span className="w-9 text-center text-xs font-bold text-slate-900 tabular-nums">
+                        {qty}
+                      </span>
+                      <button
+                        type="button"
+                        aria-label={`Augmenter la quantité pour ${opt.label}`}
+                        disabled={qty >= 20}
+                        onClick={() => handleQuantityChange(opt.id, 1)}
+                        className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-700 hover:bg-white disabled:opacity-35 transition-colors"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* SECTION SERVICES SUPPLÉMENTAIRES */}
+            <div className="bg-white border border-slate-200 rounded-xl p-3.5 space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-xs font-bold text-slate-900">
+                  <Sparkles className="w-4 h-4 text-emerald-700 shrink-0" />
+                  <span>Services supplémentaires (optionnels)</span>
+                </div>
+                <span className="text-[11px] font-semibold text-emerald-800 tabular-nums">
+                  {selectedExtras.length > 0
+                    ? `${selectedExtras.length} sélectionné${selectedExtras.length > 1 ? 's' : ''} · ${
+                        extrasTotal === 0 ? 'Gratuit (0 FCFA)' : `+${extrasTotal.toLocaleString('fr-FR')} FCFA`
+                      }`
+                    : 'Aucune option cochée'}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {SUPPLEMENTAL_SERVICES.map((extra) => {
+                  const isChecked = selectedExtraIds.includes(extra.id);
+                  return (
+                    <button
+                      key={extra.id}
+                      type="button"
+                      onClick={() => toggleExtra(extra.id)}
+                      aria-pressed={isChecked}
+                      className={`text-left px-3 py-2.5 min-h-[44px] rounded-xl border transition-colors flex items-start justify-between gap-2.5 ${
+                        isChecked
+                          ? 'bg-emerald-50 border-emerald-500 ring-1 ring-emerald-500/30'
+                          : 'bg-slate-50/70 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      <div className="flex items-start gap-2.5 min-w-0">
+                        <span
+                          className={`mt-0.5 w-4 h-4 rounded flex items-center justify-center shrink-0 border ${
+                            isChecked
+                              ? 'bg-emerald-700 border-emerald-700 text-white'
+                              : 'bg-white border-slate-300'
+                          }`}
+                        >
+                          {isChecked && <Check className="w-3 h-3" />}
+                        </span>
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold text-slate-900">{extra.label}</div>
+                          {extra.description && (
+                            <div className="text-[11px] text-slate-500 leading-snug">
+                              {extra.description}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <span
+                        className={`text-[11px] font-bold tabular-nums shrink-0 ${
+                          extra.price === 0 ? 'text-emerald-700' : 'text-slate-900'
+                        }`}
+                      >
+                        {extra.price === 0
+                          ? 'Gratuit (0 FCFA)'
+                          : `+${extra.price.toLocaleString('fr-FR')} FCFA`}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* RÉCAPITULATIF LIGNE PAR LIGNE */}
+            {selectedQuoteLines.length > 0 ? (
+              <div className="bg-white border border-emerald-200 rounded-xl p-3.5 space-y-2 text-xs">
+                <div className="font-bold text-slate-900 flex items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                  <span>Récapitulatif détaillé du devis</span>
+                  <span className="text-[11px] font-semibold text-emerald-700">En temps réel</span>
+                </div>
+
+                <div className="space-y-1.5">
+                  {selectedQuoteLines.map((line) => (
+                    <div
+                      key={line.id}
+                      className="flex items-center justify-between gap-2 text-[11px] sm:text-xs"
+                    >
+                      <div className="text-slate-700 min-w-0">
+                        <strong className="text-emerald-800 tabular-nums">{line.quantity}×</strong>{' '}
+                        <span className="font-medium text-slate-900">{line.label}</span>{' '}
+                        <span className="text-slate-500 tabular-nums">
+                          ({line.unitPrice.toLocaleString('fr-FR')} FCFA)
+                        </span>
+                      </div>
+                      <div className="font-bold text-slate-900 tabular-nums shrink-0">
+                        {line.subtotal.toLocaleString('fr-FR')} FCFA
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {selectedExtras.length > 0 && (
+                  <div className="pt-2 border-t border-slate-100 space-y-1">
+                    <div className="text-[11px] font-bold text-slate-700">
+                      Services supplémentaires inclus
+                    </div>
+                    {selectedExtras.map((extra) => (
+                      <div
+                        key={extra.id}
+                        className="flex items-center justify-between gap-2 text-[11px] sm:text-xs"
+                      >
+                        <span className="text-slate-700">+ {extra.label}</span>
+                        <span
+                          className={`font-bold tabular-nums shrink-0 ${
+                            extra.price === 0 ? 'text-emerald-700' : 'text-slate-900'
+                          }`}
+                        >
+                          {extra.price === 0
+                            ? 'Gratuit (0 FCFA)'
+                            : `+${extra.price.toLocaleString('fr-FR')} FCFA`}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {activePromotion && promoBreakdown && (
+                  <div className="pt-2 border-t border-slate-100 space-y-1">
+                    <div className="flex items-center justify-between text-slate-500">
+                      <span>Sous-total avant remise</span>
+                      <span className="line-through tabular-nums">
+                        {promoBreakdown.originalPrice.toLocaleString('fr-FR')} FCFA
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-emerald-700 font-semibold">
+                      <span className="truncate pr-2">
+                        Promotion ({promoBreakdown.offerLineLabel})
+                      </span>
+                      <span className="tabular-nums shrink-0">
+                        -{promoBreakdown.discountAmount.toLocaleString('fr-FR')} FCFA
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                <div className="pt-2 border-t border-slate-200 flex items-center justify-between text-sm font-extrabold text-emerald-900">
+                  <span>Total général</span>
+                  <span className="tabular-nums">
+                    {targetRecommendedOffer.toLocaleString('fr-FR')} FCFA
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-amber-50/70 border border-amber-200 rounded-xl px-3.5 py-2.5 text-xs text-amber-900 font-medium">
+                Choisissez au moins un élément ci-dessus (quantité ≥ 1) pour afficher votre devis détaillé.
+              </div>
+            )}
+          </div>
+
           {isFourWheelVehicle && (
             <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-4 space-y-3">
               <div className="flex items-center gap-2 text-xs font-bold text-emerald-900">
                 <Car className="w-4 h-4 text-emerald-700" />
-                <span>Caractéristiques obligatoires du véhicule à 4 roues</span>
+                <span>Précisions sur le véhicule à 4 roues</span>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <label htmlFor="veh-brand" className="text-xs font-semibold text-slate-700">
                     Marque du véhicule *
@@ -435,61 +735,67 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
                     />
                   </div>
                 )}
-
-                <div className="space-y-1">
-                  <label htmlFor="veh-seats" className="text-xs font-semibold text-slate-700">
-                    Nombre de places *
-                  </label>
-                  <select
-                    id="veh-seats"
-                    value={vehicleSeats}
-                    onChange={(e) => handleSeatsChange(Number(e.target.value))}
-                    required
-                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-700"
-                  >
-                    {VEHICLE_SEAT_OPTIONS.map((seats) => (
-                      <option key={seats} value={seats}>
-                        {seats} places {seats >= 7 ? '(Grand gabarit / SUV 7+)' : ''}
-                      </option>
-                    ))}
-                  </select>
-                </div>
               </div>
             </div>
           )}
 
-          {isTwoWheelVehicle && (
-            <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-4 space-y-3">
-              <div className="flex items-center gap-2 text-xs font-bold text-emerald-900">
-                <Bike className="w-4 h-4 text-emerald-700" />
-                <span>
-                  Détails ({service.vehicleType === 'moto' ? 'Moto / Scooter' : 'Vélo'})
-                </span>
-              </div>
-              <div className="space-y-1">
-                <label htmlFor="two-wheel-model" className="text-xs font-semibold text-slate-700">
-                  Marque / Modèle (optionnel)
-                </label>
-                <input
-                  id="two-wheel-model"
-                  type="text"
-                  value={vehicleModel}
-                  onChange={(e) => setVehicleModel(e.target.value)}
-                  placeholder={
-                    service.vehicleType === 'moto'
-                      ? 'Ex: Yamaha MT-07, Haojue, Vespa...'
-                      : 'Ex: VTT Canyon, Vélo électrique...'
-                  }
-                  className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-700"
-                />
-              </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="space-y-1">
+              <label htmlFor="cfg-material" className="text-xs font-semibold text-slate-700">
+                {service.vehicleType ? 'Type / Sellerie' : 'Revêtement / Type'}
+              </label>
+              <select
+                id="cfg-material"
+                value={material}
+                onChange={(e) => setMaterial(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-700"
+              >
+                {service.materials.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
             </div>
-          )}
+
+            <div className="space-y-1">
+              <label htmlFor="cfg-condition" className="text-xs font-semibold text-slate-700">
+                État constaté
+              </label>
+              <select
+                id="cfg-condition"
+                value={condition}
+                onChange={(e) => setCondition(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-700"
+              >
+                <option value="Léger (Entretien régulier)">Léger (Entretien régulier)</option>
+                <option value="Moyen (Taches visibles)">Moyen (Taches visibles)</option>
+                <option value="Très sale (Boue / Taches tenaces)">Très sale (Boue / Taches tenaces)</option>
+              </select>
+            </div>
+
+            <div className="space-y-1">
+              <label htmlFor="cfg-agents" className="text-xs font-semibold text-slate-700">
+                Nombre d&apos;agents souhaité
+              </label>
+              <select
+                id="cfg-agents"
+                value={agentsCount}
+                onChange={(e) => setAgentsCount(Number(e.target.value))}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-700"
+              >
+                <option value={1}>1 Agent</option>
+                <option value={2}>2 Agents</option>
+                <option value={3}>3 Agents</option>
+                <option value={4}>4 Agents (Équipe complète)</option>
+              </select>
+            </div>
+          </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-1">
               <label htmlFor="cfg-name" className="text-xs font-semibold text-slate-700">
-                Nom du client
+                Nom du client *
               </label>
               <input
                 id="cfg-name"
@@ -504,7 +810,7 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
 
             <div className="space-y-1">
               <label htmlFor="cfg-phone" className="text-xs font-semibold text-slate-700">
-                Téléphone WhatsApp (Gabon)
+                Téléphone WhatsApp (Gabon) *
               </label>
               <input
                 id="cfg-phone"
@@ -572,7 +878,7 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
 
           <div className="space-y-1">
             <label htmlFor="cfg-address" className="text-xs font-semibold text-slate-700">
-              Repère / Rue / Immeuble ({selectedQuartier.label})
+              Repère / Rue / Immeuble ({selectedQuartier.label}) *
             </label>
             <input
               id="cfg-address"
@@ -585,114 +891,16 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
             />
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="space-y-1">
-              <label htmlFor="cfg-material" className="text-xs font-semibold text-slate-700">
-                {service.vehicleType ? 'Formule / Revêtement' : 'Type / Revêtement'}
-              </label>
-              <select
-                id="cfg-material"
-                value={material}
-                onChange={(e) => setMaterial(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-700"
-              >
-                {service.materials.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="space-y-1">
-              <label htmlFor="cfg-condition" className="text-xs font-semibold text-slate-700">
-                État constaté
-              </label>
-              <select
-                id="cfg-condition"
-                value={condition}
-                onChange={(e) => setCondition(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-700"
-              >
-                <option value="Léger (Entretien régulier)">Léger (Entretien régulier)</option>
-                <option value="Moyen (Taches visibles)">Moyen (Taches visibles)</option>
-                <option value="Très sale (Boue / Taches tenaces)">Très sale (Boue / Taches tenaces)</option>
-              </select>
-            </div>
-
-            <div className="space-y-1">
-              <label htmlFor="cfg-agents" className="text-xs font-semibold text-slate-700">
-                Nombre d'agents souhaité
-              </label>
-              <select
-                id="cfg-agents"
-                value={agentsCount}
-                onChange={(e) => setAgentsCount(Number(e.target.value))}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-700"
-              >
-                <option value={1}>1 Agent</option>
-                <option value={2}>2 Agents</option>
-                <option value={3}>3 Agents</option>
-                <option value={4}>4 Agents (Équipe complète)</option>
-              </select>
-            </div>
-          </div>
-
-          {service.availableOptions.length > 0 && (
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-semibold text-slate-700">Options de traitement</span>
-                <span className="text-[11px] font-medium text-emerald-800 tabular-nums">
-                  Supplément options : +{optionsTotal.toLocaleString()} XAF
-                </span>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {service.availableOptions.map((opt) => {
-                  const active = selectedOptions.includes(opt);
-                  const optPrice = getOptionPrice(opt);
-                  const priceLabel =
-                    optPrice === 0
-                      ? 'Gratuit (0 XAF)'
-                      : `+${optPrice.toLocaleString()} XAF`;
-                  return (
-                    <button
-                      type="button"
-                      key={opt}
-                      onClick={() => toggleOption(opt)}
-                      className={`px-3 py-2.5 min-h-[44px] rounded-xl text-xs font-medium border transition-colors flex items-center justify-between gap-2 text-left ${
-                        active
-                          ? 'bg-emerald-700 text-white border-emerald-700'
-                          : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-                      }`}
-                    >
-                      <span className="font-semibold">{opt}</span>
-                      <span
-                        className={`text-[11px] font-bold tabular-nums whitespace-nowrap shrink-0 ${
-                          active
-                            ? 'text-emerald-100'
-                            : optPrice === 0
-                            ? 'text-emerald-700'
-                            : 'text-slate-900'
-                        }`}
-                      >
-                        {priceLabel}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-1">
               <label htmlFor="cfg-offer" className="text-xs font-semibold text-slate-700">
-                Votre proposition de tarif (FCFA / XAF)
+                Votre proposition de tarif (FCFA)
               </label>
               <input
                 id="cfg-offer"
                 type="number"
-                value={clientOfferPrice}
+                value={clientOfferPrice || ''}
+                placeholder="0"
                 onChange={(e) => {
                   setHasManualOffer(true);
                   setClientOfferPrice(Number(e.target.value));
@@ -702,20 +910,10 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-900 tabular-nums focus:outline-none focus:ring-2 focus:ring-emerald-700"
               />
               <p className="text-[11px] text-slate-500 tabular-nums">
-                Référence : {baseAdjustedPrice.toLocaleString('fr-FR')} FCFA (base) +{' '}
-                {optionsTotal.toLocaleString('fr-FR')} FCFA (options) ={' '}
-                <strong className="text-slate-800">
-                  {recommendedPrice.toLocaleString('fr-FR')} FCFA
+                Devis calculé :{' '}
+                <strong className="text-emerald-800">
+                  {targetRecommendedOffer.toLocaleString('fr-FR')} FCFA
                 </strong>
-                {activePromotion && promoBreakdown && (
-                  <>
-                    {' '}
-                    → Promo :{' '}
-                    <strong className="text-emerald-800">
-                      {targetRecommendedOffer.toLocaleString('fr-FR')} FCFA
-                    </strong>
-                  </>
-                )}
               </p>
             </div>
 
@@ -737,38 +935,13 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
             </div>
           </div>
 
-          {activePromotion && promoBreakdown && (
-            <div className="bg-slate-50 border border-emerald-200 rounded-xl p-4 space-y-2 text-xs">
-              <div className="font-bold text-slate-900 flex items-center justify-between gap-2">
-                <span>Récapitulatif de prix avec promotion</span>
-                <button
-                  type="button"
-                  onClick={handleRemovePromo}
-                  className="text-[11px] font-semibold text-rose-700 hover:text-rose-800 underline"
-                >
-                  Retirer la promotion
-                </button>
-              </div>
-              <div className="flex items-center justify-between text-slate-500">
-                <span>Prix initial</span>
-                <span className="line-through tabular-nums">
-                  {promoBreakdown.originalPrice.toLocaleString('fr-FR')} FCFA
-                </span>
-              </div>
-              <div className="flex items-center justify-between text-emerald-700 font-semibold">
-                <span>
-                  Promotion &quot;{promoBreakdown.offerLineLabel}&quot;
-                </span>
-                <span className="tabular-nums">
-                  -{promoBreakdown.discountAmount.toLocaleString('fr-FR')} FCFA
-                </span>
-              </div>
-              <div className="flex items-center justify-between pt-2 border-t border-slate-200 text-sm font-extrabold text-emerald-900">
-                <span>Total à payer</span>
-                <span className="tabular-nums">
-                  {Math.max(1000, Math.round(clientOfferPrice)).toLocaleString('fr-FR')} FCFA
-                </span>
-              </div>
+          {selectionError && (
+            <div
+              role="alert"
+              className="bg-rose-50 border border-rose-200 rounded-xl px-3.5 py-2.5 text-xs text-rose-800 flex items-start gap-2"
+            >
+              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+              <span>{selectionError}</span>
             </div>
           )}
 
@@ -776,8 +949,8 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
             <div>
               <div className="text-xs text-slate-500">
                 {activePromotion && promoBreakdown
-                  ? 'Total à payer (remise incluse)'
-                  : 'Montant proposé au gérant'}
+                  ? 'Total général (remise incluse)'
+                  : 'Total général du devis'}
               </div>
               <div className="flex items-baseline gap-2.5">
                 {activePromotion && promoBreakdown && (
@@ -786,7 +959,12 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
                   </span>
                 )}
                 <div className="text-lg font-bold text-emerald-900 tabular-nums">
-                  {Math.max(1000, Math.round(clientOfferPrice)).toLocaleString('fr-FR')} FCFA
+                  {rawQuoteTotal > 0
+                    ? `${Math.max(
+                        1000,
+                        Math.round(clientOfferPrice > 0 ? clientOfferPrice : targetRecommendedOffer)
+                      ).toLocaleString('fr-FR')} FCFA`
+                    : '0 FCFA'}
                 </div>
               </div>
             </div>
@@ -796,16 +974,28 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
                 <button
                   type="button"
                   onClick={handleAddConfiguredToCart}
-                  className="px-4 py-3 min-h-[44px] bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-900 font-semibold text-xs rounded-xl transition-colors flex items-center gap-2 whitespace-nowrap shrink-0"
+                  className={`px-4 py-3 min-h-[44px] font-semibold text-xs rounded-xl transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
+                    initialIntent === 'cart'
+                      ? 'bg-emerald-700 hover:bg-emerald-800 text-white shadow-md'
+                      : 'bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-900'
+                  }`}
                 >
-                  <ShoppingCart className="w-4 h-4 text-emerald-700" />
+                  <ShoppingCart
+                    className={`w-4 h-4 ${
+                      initialIntent === 'cart' ? 'text-white' : 'text-emerald-700'
+                    }`}
+                  />
                   <span>Ajouter au panier</span>
                 </button>
               )}
 
               <button
                 type="submit"
-                className="px-6 py-3 min-h-[44px] bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-xs rounded-xl shadow-md transition-colors flex items-center gap-2 whitespace-nowrap shrink-0"
+                className={`px-6 py-3 min-h-[44px] font-semibold text-xs rounded-xl transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 ${
+                  initialIntent === 'cart'
+                    ? 'bg-slate-900 hover:bg-emerald-700 text-white'
+                    : 'bg-emerald-700 hover:bg-emerald-800 text-white shadow-md'
+                }`}
               >
                 <span>Envoyer la commande</span>
                 <Check className="w-4 h-4" />

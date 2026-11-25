@@ -1,4 +1,11 @@
-import { AgentProfile, Booking, Promotion, ServiceItem, UserProfile } from '../types';
+import {
+  AgentProfile,
+  Booking,
+  Promotion,
+  ServiceItem,
+  SupplementalServiceOption,
+  UserProfile,
+} from '../types';
 
 export const APP_OFFICIAL_NAME = 'Shine-x-Sanitize Alp Group';
 export const BRAND_LOGO_URL = '/logo-official.png';
@@ -79,21 +86,90 @@ export const VEHICLE_BRANDS = [
 
 export const VEHICLE_SEAT_OPTIONS = [2, 4, 5, 7, 9];
 
+export const VEHICLE_4W_INTERIOR_NOTE =
+  'Note importante : Les prestations sur véhicules concernent exclusivement le nettoyage intérieur.';
+
+export const SUPPLEMENTAL_SERVICES: SupplementalServiceOption[] = [
+  {
+    id: 'anti-taches',
+    label: 'Anti-tâches',
+    price: 5000,
+    description: 'Barrière protectrice contre les taches du quotidien',
+  },
+  {
+    id: 'impermeabilisant',
+    label: 'Imperméabilisant',
+    price: 10000,
+    description: 'Protection hydrofuge longue durée contre les liquides',
+  },
+  {
+    id: 'desodorisant',
+    label: 'Désodorisant',
+    price: 0,
+    description: 'Parfum fraîcheur et neutralisation des odeurs',
+  },
+  {
+    id: 'anti-acariens',
+    label: 'Traitement anti-acariens',
+    price: 5000,
+    description: 'Action assainissante antibactérienne et anti-allergènes',
+  },
+  {
+    id: 'detachage-cible',
+    label: 'Détachage ciblé',
+    price: 7500,
+    description: 'Traitement intensif sur zones et taches incrustées',
+  },
+];
+
+export const SERVICE_QUOTE_OPTIONS: Record<string, { id: string; label: string; unitPrice: number }[]> = {
+  'srv-1': [
+    { id: 'pouf', label: 'Pouf', unitPrice: 2500 },
+    { id: 'chaise', label: 'Chaise', unitPrice: 2500 },
+    { id: 'fauteuil-1', label: 'Fauteuil 1 place', unitPrice: 5000 },
+    { id: 'canape-2', label: 'Canapé 2 places', unitPrice: 10000 },
+    { id: 'canape-3', label: 'Canapé 3 places', unitPrice: 15000 },
+    { id: 'canape-l', label: 'Canapé en L', unitPrice: 25000 },
+    { id: 'canape-u', label: 'Canapé en U', unitPrice: 45000 },
+  ],
+  'srv-4': [
+    { id: 'petit-tapis', label: 'Petit tapis', unitPrice: 10000 },
+    { id: 'tapis-moyen', label: 'Tapis moyen', unitPrice: 15000 },
+    { id: 'grand-tapis', label: 'Grand tapis', unitPrice: 20000 },
+  ],
+  'srv-3': [
+    { id: 'matelas-1', label: 'Matelas 1 place', unitPrice: 10000 },
+    { id: 'matelas-2', label: 'Matelas 2 places', unitPrice: 15000 },
+    { id: 'matelas-3', label: 'Matelas 3 places', unitPrice: 20000 },
+    { id: 'matelas-4', label: 'Matelas 4 places', unitPrice: 25000 },
+    { id: 'berceau', label: 'Berceau', unitPrice: 10000 },
+    { id: 'poussette', label: 'Poussette', unitPrice: 10000 },
+  ],
+  'srv-8': [
+    { id: 'baie-vitree', label: 'Baie vitrée', unitPrice: 8000 },
+    { id: 'fenetre', label: 'Fenêtre', unitPrice: 4000 },
+  ],
+  'srv-5': [
+    { id: 'citadine', label: 'Citadine', unitPrice: 15000 },
+    { id: 'berline', label: 'Berline', unitPrice: 25000 },
+    { id: 'suv', label: 'SUV', unitPrice: 35000 },
+    { id: 'pickup', label: 'Pick-up', unitPrice: 55000 },
+    { id: 'camion', label: 'Camion', unitPrice: 65000 },
+  ],
+};
+
+export function getServiceQuoteOptions(
+  serviceId: string
+): { id: string; label: string; unitPrice: number }[] {
+  return SERVICE_QUOTE_OPTIONS[serviceId] || [];
+}
+
 export const SERVICE_OPTION_PRICES: Record<string, number> = {
+  'Anti-tâches': 5000,
+  Imperméabilisant: 10000,
   Désodorisant: 0,
-  'Traitement anti-taches ciblé': 10000,
-  'Traitement anti-acariens / antibactérien': 5000,
-  'Protection textile hydrofuge': 7500,
-  'Décapage peinture & colle': 15000,
-  'Monobrosse sols carrelés': 20000,
-  'Lustrage carrosserie': 6000,
-  'Protection cuir & plastiques': 5000,
-  'Dégraissage & lubrification chaîne': 2000,
-  'Polissage chromes & protection': 2500,
-  'Dégraissage complet transmission': 1500,
-  'Cire protectrice cadre & lubrification': 2000,
-  'Désinfection virucide certifiée': 15000,
-  'Protection anti-traces vitres': 8000,
+  'Traitement anti-acariens': 5000,
+  'Détachage ciblé': 7500,
 };
 
 export function getOptionPrice(optionName: string): number {
@@ -105,168 +181,69 @@ export const AGENTS_ROSTER: AgentProfile[] = [];
 export const SERVICES: ServiceItem[] = [
   {
     id: 'srv-1',
-    name: 'Canapé & Salon Complet',
+    name: 'Canapés & Assises',
     category: 'Mobilier',
-    basePrice: 30000,
-    duration: '2h - 3h',
+    basePrice: 2500,
+    duration: '1h - 3h',
     description:
-      'Nettoyage en profondeur par injection-extraction vapeur, élimination des acariens et des taches tenaces.',
+      'Nettoyage en profondeur par injection-extraction vapeur pour poufs, chaises, fauteuils et canapés (2 places, 3 places, en L ou en U).',
     image: '/src/assets/images/sofa_shine_alp_black_tech_1795438790341.jpg',
     materials: ['Velours', 'Cuir', 'Tissu Coton', 'Synthétique', 'Daim'],
-    availableOptions: [
-      'Désodorisant',
-      'Traitement anti-taches ciblé',
-      'Traitement anti-acariens / antibactérien',
-      'Protection textile hydrofuge',
-    ],
-    updatedAt: '2026-11-17T08:00:00Z',
+    availableOptions: [],
+    updatedAt: '2026-11-24T08:00:00Z',
   },
   {
-    id: 'srv-btp',
-    name: 'Nettoyage après travaux BTP',
-    category: 'BTP',
-    basePrice: 145000,
-    duration: '5h - 8h',
+    id: 'srv-4',
+    name: 'Tapis & Moquettes',
+    category: 'Sol',
+    basePrice: 10000,
+    duration: '1h - 2h',
     description:
-      'Remise en état complète après construction ou rénovation : évacuation poussières fines de ciment, décapage traces de peinture sur vitres, lavage mécanisé des sols et sanitaires.',
-    image: '/src/assets/images/btp_shine_alp_1795029312202.jpg',
-    materials: ['Appartement / Villa neuve', 'Immeuble / Bureaux BTP', 'Local commercial rénové', 'Façade & Baies vitrées'],
-    availableOptions: [
-      'Désodorisant',
-      'Traitement anti-taches ciblé',
-      'Décapage peinture & colle',
-      'Monobrosse sols carrelés',
-    ],
-    updatedAt: '2026-11-17T08:00:00Z',
+      'Shampouinage en profondeur et brossage mécanisé pour petits tapis, tapis moyens et grands tapis afin de restaurer éclat et hygiène.',
+    image: '/src/assets/images/tapis_shine_alp_1795029313826.jpg',
+    materials: ['Laine', 'Soie', 'Fibres Synthétiques', 'Jute'],
+    availableOptions: [],
+    updatedAt: '2026-11-24T08:00:00Z',
+  },
+  {
+    id: 'srv-3',
+    name: 'Matelas & Articles bébé',
+    category: 'Literie',
+    basePrice: 10000,
+    duration: '1h - 1h30',
+    description:
+      'Assainissement vapeur haute température des matelas (1 à 4 places), berceaux et poussettes avec élimination des acariens et auréoles.',
+    image: '/src/assets/images/matelas_shine_alp_1795029312918.jpg',
+    materials: ['Matelas Latex', 'Mousse Mémoire', 'Ressorts', 'Textile Bébé'],
+    availableOptions: [],
+    updatedAt: '2026-11-24T08:00:00Z',
+  },
+  {
+    id: 'srv-8',
+    name: 'Vitrerie (Baies & Fenêtres)',
+    category: 'Professionnel',
+    basePrice: 4000,
+    duration: '1h - 2h',
+    description:
+      'Lavage sans traces des baies vitrées et fenêtres avec finition soignée anti-calcaire et anti-embruns.',
+    image: '/src/assets/images/office_shine_alp_1795029308753.jpg',
+    materials: ['Baie vitrée', 'Fenêtre standard', 'Verre teinté / miroir'],
+    availableOptions: [],
+    updatedAt: '2026-11-24T08:00:00Z',
   },
   {
     id: 'srv-5',
-    name: 'Véhicule à 4 Roues (Voiture / SUV / 4x4)',
+    name: 'Nettoyage Véhicules à 4 roues',
     category: 'Véhicules',
     vehicleType: '4_wheels',
     basePrice: 15000,
     duration: '1h30 - 2h30',
     description:
-      'Lavage complet intérieur et extérieur à domicile à Libreville : carrosserie, aspiration, shampoing des sièges et désinfection habitacle selon la marque et le nombre de places.',
+      'Nettoyage intérieur complet à domicile pour citadine, berline, SUV, pick-up et camion : aspiration, shampouinage des sièges et désinfection habitacle.',
     image: '/src/assets/images/car_shine_alp_1795029311865.jpg',
-    materials: ['Carrosserie + Sièges Tissu', 'Carrosserie + Sellerie Cuir', 'Intérieur Complet Uniquement', 'Extérieur + Lustrage'],
-    availableOptions: [
-      'Désodorisant',
-      'Traitement anti-taches ciblé',
-      'Lustrage carrosserie',
-      'Protection cuir & plastiques',
-    ],
-    updatedAt: '2026-11-17T08:00:00Z',
-  },
-  {
-    id: 'srv-6',
-    name: 'Lavage Moto & Scooter',
-    category: 'Véhicules',
-    vehicleType: 'moto',
-    basePrice: 6000,
-    duration: '45 min',
-    description:
-      'Dégraissage chaîne et moteur, lavage mousse active sans rayure à Libreville, séchage microfibre et protection plastiques & chromes.',
-    image: '/src/assets/images/moto_shine_alp_1795029315085.jpg',
-    materials: ['Moto Routière / Trail', 'Scooter Urbain', 'Moto Cross / Quad'],
-    availableOptions: [
-      'Désodorisant',
-      'Traitement anti-taches ciblé',
-      'Dégraissage & lubrification chaîne',
-      'Polissage chromes & protection',
-    ],
-    updatedAt: '2026-11-17T08:00:00Z',
-  },
-  {
-    id: 'srv-7',
-    name: 'Entretien & Lavage Vélo',
-    category: 'Véhicules',
-    vehicleType: 'velo',
-    basePrice: 4000,
-    duration: '30 - 45 min',
-    description:
-      'Nettoyage haute précision pour VTT, vélo de route ou vélo électrique : cadre, transmission, dérailleur et lubrification.',
-    image: '/src/assets/images/velo_shine_alp_1795029315713.jpg',
-    materials: ['VTT', 'Vélo de Route Carbone', 'Vélo Électrique (VAE)', 'Vélo de Ville'],
-    availableOptions: [
-      'Désodorisant',
-      'Traitement anti-taches ciblé',
-      'Dégraissage complet transmission',
-      'Cire protectrice cadre & lubrification',
-    ],
-    updatedAt: '2026-11-17T08:00:00Z',
-  },
-  {
-    id: 'srv-2',
-    name: 'Désinfection & Nettoyage Bureaux',
-    category: 'Professionnel',
-    basePrice: 95000,
-    duration: '4h - 6h',
-    description:
-      'Nettoyage complet des espaces professionnels, cloisons vitrées, sols, postes de travail et sanitaires.',
-    image: '/src/assets/images/office_shine_alp_1795029308753.jpg',
-    materials: ['Surfaces Verre', 'Moquette Bureau', 'Carrelage', 'Mobilier Bois'],
-    availableOptions: [
-      'Désodorisant',
-      'Traitement anti-taches ciblé',
-      'Désinfection virucide certifiée',
-      'Protection anti-traces vitres',
-    ],
-    updatedAt: '2026-11-17T08:00:00Z',
-  },
-  {
-    id: 'srv-3',
-    name: 'Matelas & Literie Hygiène Pro',
-    category: 'Literie',
-    basePrice: 20000,
-    duration: '1h30',
-    description:
-      'Intervention par injection-extraction vapeur haute température directement sur votre matelas, élimination des acariens, bactéries et auréoles.',
-    image: '/src/assets/images/matelas_shine_alp_1795029312918.jpg',
-    materials: ['Matelas Latex', 'Mousse Mémoire', 'Ressorts', 'Coton Bio'],
-    availableOptions: [
-      'Désodorisant',
-      'Traitement anti-taches ciblé',
-      'Traitement anti-acariens / antibactérien',
-      'Protection textile hydrofuge',
-    ],
-    updatedAt: '2026-11-17T08:00:00Z',
-  },
-  {
-    id: 'srv-4',
-    name: 'Tapis & Moquettes Résidentiel',
-    category: 'Sol',
-    basePrice: 25000,
-    duration: '2h',
-    description:
-      'Shampouinage en profondeur et brossage rotatif mécanisé pour redonner éclat, douceur et propreté à vos tapis et moquettes.',
-    image: '/src/assets/images/tapis_shine_alp_1795029313826.jpg',
-    materials: ['Laine', 'Soie', 'Fibres Synthétiques', 'Jute'],
-    availableOptions: [
-      'Désodorisant',
-      'Traitement anti-taches ciblé',
-      'Traitement anti-acariens / antibactérien',
-      'Protection textile hydrofuge',
-    ],
-    updatedAt: '2026-11-17T08:00:00Z',
-  },
-  {
-    id: 'srv-8',
-    name: 'Nettoyage Vitres & Baies Vitrées',
-    category: 'Professionnel',
-    basePrice: 22000,
-    duration: '1h30 - 2h',
-    description:
-      'Lavage sans trace des baies vitrées, vérandas, garde-corps et miroirs avec traitement anti-calcaire et anti-embruns marins.',
-    image: '/src/assets/images/office_shine_alp_1795029308753.jpg',
-    materials: ['Baies vitrées villa', 'Vitrine commerciale', 'Verre teinté / miroir'],
-    availableOptions: [
-      'Désodorisant',
-      'Traitement anti-taches ciblé',
-      'Désinfection virucide certifiée',
-      'Protection anti-traces vitres',
-    ],
-    updatedAt: '2026-11-17T08:00:00Z',
+    materials: ['Sellerie Tissu', 'Sellerie Cuir', 'Similicuir & Alcantara'],
+    availableOptions: [],
+    updatedAt: '2026-11-24T08:00:00Z',
   },
 ];
 

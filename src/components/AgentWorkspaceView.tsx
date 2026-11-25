@@ -816,7 +816,11 @@ export const AgentWorkspaceView: React.FC<AgentWorkspaceViewProps> = ({
                   <>
                     <span aria-hidden="true">·</span>
                     <span className="font-semibold text-emerald-800">
-                      Véhicule : {mission.details.vehicleBrand} ({mission.details.vehicleSeats} places)
+                      Véhicule : {mission.details.vehicleBrand}
+                      {mission.details.vehicleModel ? ` ${mission.details.vehicleModel}` : ''}
+                      {typeof mission.details.vehicleSeats === 'number'
+                        ? ` (${mission.details.vehicleSeats} places)`
+                        : ''}
                     </span>
                   </>
                 )}

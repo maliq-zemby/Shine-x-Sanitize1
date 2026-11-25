@@ -129,10 +129,24 @@ export interface BookingServiceItem {
   image?: string;
 }
 
+export interface ServiceQuoteOption {
+  id: string;
+  label: string;
+  unitPrice: number;
+}
+
+export interface SupplementalServiceOption {
+  id: string;
+  label: string;
+  price: number;
+  description?: string;
+}
+
 export interface CartItem extends BookingServiceItem {
   cartItemId: string;
   duration?: string;
   promotion?: Promotion | null;
+  quoteLines?: BookingServiceItem[];
 }
 
 export interface Booking {
@@ -162,6 +176,7 @@ export interface Booking {
     vehicleModel?: string;
     vehicleSeats?: number;
     cartItems?: BookingServiceItem[];
+    supplementalServices?: { id: string; label: string; price: number }[];
   };
   clientOfferPrice: number;
   promoApplied?: BookingPromoApplied | null;

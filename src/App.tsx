@@ -30,12 +30,11 @@ import {
   CheckCircle2,
   ChevronRight,
   ClipboardList,
-  HardHat,
   Home,
+  Info,
   LogIn,
   LogOut,
   Megaphone,
-  Navigation,
   ShieldCheck,
   ShoppingCart,
   Sliders,
@@ -59,7 +58,6 @@ import {
 } from './components/NotificationCenter';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import { ServiceConfiguratorModal } from './components/ServiceConfiguratorModal';
-import { VehicleMobilityModal } from './components/VehicleMobilityModal';
 import { useNetworkStatus } from './hooks/useNetworkStatus';
 import {
   ADMIN_BOOTSTRAP_EMAIL,
@@ -74,6 +72,7 @@ import {
   PROTOTYPE_EMAILS,
   PROTOTYPE_PROMO_IDS,
   SERVICES,
+  VEHICLE_4W_INTERIOR_NOTE,
 } from './data/mockData';
 import { DEFAULT_GPS_POSITION } from './data/quartiers';
 import {
@@ -96,6 +95,7 @@ import {
   Promotion,
   Role,
   ServiceItem,
+  SupplementalServiceOption,
   UserProfile,
 } from './types';
 import { getBookingItems } from './utils/bookingItems';
@@ -134,30 +134,49 @@ function getDashboardTabForRole(role: Role): ActiveTab {
 }
 
 const STORAGE_KEYS = {
-  services: 'sxs_alp_services_prod_v2',
+  services: 'sxs_alp_services_prod_v4',
   cart: 'sxs_alp_cart_v1',
   cartPromo: 'sxs_alp_cart_promo_v1',
+  cartExtras: 'sxs_alp_cart_extras_v1',
 };
 
 const LEGACY_PROTOTYPE_KEYS = [
   'sxs_alp_services_v2',
   'sxs_alp_services_v3',
   'sxs_alp_services_prod_v1',
+  'sxs_alp_services_prod_v2',
+  'sxs_alp_services_prod_v3',
   'sxs_alp_bookings_v2',
   'sxs_alp_promotions_v2',
   'sxs_alp_users_v2',
 ];
 
-const REMOVED_SERVICE_IDS = new Set(['srv-9']);
-const CANONICAL_SERVICE_IMAGE_BY_ID = new Map(SERVICES.map((s) => [s.id, s.image]));
+const REMOVED_SERVICE_IDS = new Set(['srv-9', 'srv-btp', 'srv-2', 'srv-7', 'srv-6']);
+const CANONICAL_SERVICE_BY_ID = new Map(SERVICES.map((s) => [s.id, s]));
 
 function normalizeServiceImages(items: ServiceItem[]): ServiceItem[] {
-  return items
+  const byId = new Map<string, ServiceItem>();
+  SERVICES.forEach((canon) => byId.set(canon.id, canon));
+
+  items
     .filter((s) => !REMOVED_SERVICE_IDS.has(s.id))
-    .map((s) => ({
-      ...s,
-      image: CANONICAL_SERVICE_IMAGE_BY_ID.get(s.id) || s.image,
-    }));
+    .forEach((s) => {
+      const canon = CANONICAL_SERVICE_BY_ID.get(s.id);
+      if (canon) {
+        byId.set(s.id, {
+          ...s,
+          name: canon.name,
+          category: canon.category,
+          ...(canon.vehicleType ? { vehicleType: canon.vehicleType } : {}),
+          description: canon.description,
+          image: canon.image,
+          materials: canon.materials,
+          availableOptions: canon.availableOptions,
+        });
+      }
+    });
+
+  return Array.from(byId.values());
 }
 
 function loadLocal<T>(key: string, fallback: T): T {
@@ -191,7 +210,7 @@ export default function App() {
 
   const [previewRole, setPreviewRole] = useState<Role>('client');
   const [activeTab, setActiveTab] = useState<ActiveTab>('home');
-  const [serviceFilter, setServiceFilter] = useState<'all' | 'vehicles' | 'btp' | 'home'>('all');
+  const [serviceFilter, setServiceFilter] = useState<'all' | 'vehicles' | 'home'>('all');
 
   const [services, setServices] = useState<ServiceItem[]>(() =>
     normalizeServiceImages(loadLocal(STORAGE_KEYS.services, SERVICES))
@@ -211,14 +230,17 @@ export default function App() {
   const notifSnapshotReadyRef = useRef(false);
 
   const [selectedService, setSelectedService] = useState<ServiceItem | null>(null);
+  const [configuratorIntent, setConfiguratorIntent] = useState<'order' | 'cart'>('order');
   const [activePromotion, setActivePromotion] = useState<Promotion | null>(null);
   const [pendingBooking, setPendingBooking] = useState<Booking | null>(null);
   const pendingBookingFromCartRef = useRef(false);
-  const [showVehicleMobilityModal, setShowVehicleMobilityModal] = useState(false);
   const [commissionRate, setCommissionRate] = useState<number>(10);
 
   const [cartItems, setCartItems] = useState<CartItem[]>(() =>
     loadLocal<CartItem[]>(STORAGE_KEYS.cart, [])
+  );
+  const [cartExtras, setCartExtras] = useState<SupplementalServiceOption[]>(() =>
+    loadLocal<SupplementalServiceOption[]>(STORAGE_KEYS.cartExtras, [])
   );
   const [cartPromotion, setCartPromotion] = useState<Promotion | null>(() =>
     loadLocal<Promotion | null>(STORAGE_KEYS.cartPromo, null)
@@ -284,6 +306,18 @@ export default function App() {
       // ignore storage quota errors
     }
   }, [cartPromotion]);
+
+  useEffect(() => {
+    try {
+      if (cartExtras.length > 0) {
+        localStorage.setItem(STORAGE_KEYS.cartExtras, JSON.stringify(cartExtras));
+      } else {
+        localStorage.removeItem(STORAGE_KEYS.cartExtras);
+      }
+    } catch {
+      // ignore storage quota errors
+    }
+  }, [cartExtras]);
 
   useEffect(() => {
     if (!cartFeedback) return;
@@ -1435,7 +1469,10 @@ export default function App() {
     }
   };
 
-  const handleAddConfiguredItemToCart = (item: CartItem) => {
+  const handleAddConfiguredItemToCart = (
+    item: CartItem,
+    selectedExtras: SupplementalServiceOption[] = []
+  ) => {
     setCartSubmitError('');
     const normalizedOpts = [...(item.options || [])].sort().join('|');
     setCartItems((prev) => {
@@ -1464,44 +1501,43 @@ export default function App() {
       }
       return [...prev.slice(0, 24), { ...item, totalPrice: item.unitPrice * (item.quantity || 1) }];
     });
+    if (selectedExtras.length > 0) {
+      setCartExtras((prev) => {
+        const merged = new Map(prev.map((e) => [e.id, e]));
+        selectedExtras.forEach((e) => merged.set(e.id, e));
+        return Array.from(merged.values());
+      });
+    }
     if (item.promotion) {
       setCartPromotion((prev) => prev || item.promotion || null);
     }
     setSelectedService(null);
     setActivePromotion(null);
-    setCartFeedback(`« ${item.serviceName} » ajouté au panier.`);
+    setCartFeedback(
+      selectedExtras.length > 0
+        ? `« ${item.serviceName} » et ${selectedExtras.length} supplément${selectedExtras.length > 1 ? 's' : ''} ajoutés au panier.`
+        : `« ${item.serviceName} » ajouté au panier.`
+    );
   };
 
-  const handleQuickAddServiceToCart = (
+  const handleToggleCartExtra = (extra: SupplementalServiceOption) => {
+    setCartExtras((prev) =>
+      prev.some((e) => e.id === extra.id)
+        ? prev.filter((e) => e.id !== extra.id)
+        : [...prev, extra]
+    );
+  };
+
+  const openServiceConfigurator = (
     service: ServiceItem,
+    intent: 'order' | 'cart' = 'order',
     promoOverride?: Promotion | null
   ) => {
-    const appliedPromo = promoOverride ?? activePromotion;
-    const defaultAgents =
-      service.vehicleType === 'moto' || service.vehicleType === 'velo'
-        ? 1
-        : service.category === 'BTP'
-        ? 4
-        : 2;
-    const cartItem: CartItem = {
-      cartItemId: `cart-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
-      serviceId: service.id,
-      serviceName: service.name,
-      serviceCategory: service.category,
-      ...(service.vehicleType ? { vehicleType: service.vehicleType } : {}),
-      quantity: 1,
-      unitPrice: service.basePrice,
-      totalPrice: service.basePrice,
-      material: service.materials[0] || '',
-      condition: 'Moyen (Taches visibles)',
-      options: [],
-      agentsCount: defaultAgents,
-      ...(service.vehicleType === '4_wheels' ? { vehicleBrand: 'Toyota', vehicleSeats: 5 } : {}),
-      image: service.image,
-      duration: service.duration,
-      ...(appliedPromo ? { promotion: appliedPromo } : {}),
-    };
-    handleAddConfiguredItemToCart(cartItem);
+    setConfiguratorIntent(intent);
+    if (promoOverride !== undefined) {
+      setActivePromotion(promoOverride);
+    }
+    setSelectedService(service);
   };
 
   const handleUpdateCartQuantity = (cartItemId: string, nextQuantity: number) => {
@@ -1521,6 +1557,7 @@ export default function App() {
 
   const handleClearCart = () => {
     setCartItems([]);
+    setCartExtras([]);
     setCartPromotion(null);
     setCartSubmitError('');
   };
@@ -2887,19 +2924,11 @@ export default function App() {
     }
   };
 
-  // Unified catalog grouping: combine the 3 vehicle sub-services into one unified card
-  const vehicleServices = services.filter((s) => s.category === 'Véhicules');
-  const minVehiclePrice = Math.min(...vehicleServices.map((s) => s.basePrice));
-  const nonVehicleServices = services.filter((s) => s.category !== 'Véhicules');
-
-  const visibleNonVehicleServices = nonVehicleServices.filter((srv) => {
-    if (serviceFilter === 'vehicles') return false;
-    if (serviceFilter === 'btp') return srv.category === 'BTP';
-    if (serviceFilter === 'home') return srv.category !== 'BTP';
+  const visibleCatalogServices = services.filter((srv) => {
+    if (serviceFilter === 'vehicles') return srv.category === 'Véhicules';
+    if (serviceFilter === 'home') return srv.category !== 'Véhicules';
     return true;
   });
-
-  const showUnifiedVehicleCard = serviceFilter === 'all' || serviceFilter === 'vehicles';
   const approvedPromotions = [...promotions]
     .filter((p) => p.status === 'active' || p.status === 'approved')
     .sort((a, b) => (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || ''));
@@ -2961,12 +2990,12 @@ export default function App() {
           >
             <img
               src={BRAND_LOGO_URL}
-              alt={APP_OFFICIAL_NAME}
+              alt="Shine-x-Sanitize"
               className="w-9 h-9 rounded-lg object-contain bg-white p-0.5 border border-slate-200 shrink-0"
               referrerPolicy="no-referrer"
             />
             <span className="text-sm sm:text-base font-extrabold tracking-tight text-emerald-950 truncate">
-              {APP_OFFICIAL_NAME}
+              Shine-x-Sanitize
             </span>
           </button>
 
@@ -3327,7 +3356,7 @@ export default function App() {
               <div className="absolute inset-0">
                 <img
                   src="/src/assets/images/hero_shine_alp_1795029308068.jpg"
-                  alt="Équipe professionnelle Shine-x-Sanitize Alp Group à Libreville"
+                  alt="Équipe professionnelle Shine-x-Sanitize à Libreville"
                   className="w-full h-full object-cover opacity-40"
                   referrerPolicy="no-referrer"
                 />
@@ -3338,161 +3367,49 @@ export default function App() {
                 <div className="flex items-center gap-3">
                   <img
                     src={BRAND_LOGO_URL}
-                    alt={APP_OFFICIAL_NAME}
+                    alt="Shine-x-Sanitize"
                     className="w-11 h-11 rounded-xl object-contain bg-white p-0.5 border border-white/25 shrink-0"
                     referrerPolicy="no-referrer"
                   />
                   <div className="text-xs font-medium text-emerald-300">
-                    {APP_OFFICIAL_NAME} · Libreville, Akanda & Owendo
+                    Shine-x-Sanitize · Grand Libreville
                   </div>
                 </div>
 
                 <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight text-white leading-tight [text-wrap:balance]">
-                  Propreté Professionnelle, BTP & Mobilité à Domicile
+                  Nettoyage professionnel à domicile et en entreprise
                 </h1>
 
                 <p className="text-sm sm:text-base text-slate-200 leading-relaxed max-w-xl">
-                  Mobilier, nettoyage après travaux BTP, voitures 4 roues, motos et vélos. Tarifs ajustés au marché gabonais, suivi GPS client/agent en temps réel et paiement Airtel ou Moov Money.
+                  Mobilier et véhicules. Tarifs flexibles, suivi GPS des agents et commandes en temps réel, avec paiement par Airtel Money et Moov Money.
                 </p>
-
-                {/* Home Action Buttons */}
-                <div className="flex flex-wrap items-center gap-3 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('mes_reservations')}
-                    className="px-5 py-3 min-h-[48px] bg-emerald-700 hover:bg-emerald-600 text-white text-xs sm:text-sm font-semibold rounded-xl shadow-lg transition-colors inline-flex items-center gap-2 whitespace-nowrap"
-                  >
-                    <CalendarCheck className="w-4 h-4" />
-                    <span>Mes Réservations</span>
-                  </button>
-
-                  {isManagerOrAdmin && (
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('suivi_commande')}
-                      className="px-5 py-3 min-h-[48px] bg-white hover:bg-slate-100 text-emerald-950 text-xs sm:text-sm font-bold rounded-xl shadow-lg transition-colors inline-flex items-center gap-2 whitespace-nowrap"
-                    >
-                      <ClipboardList className="w-4 h-4 text-emerald-700" />
-                      <span>Suivi et Commande</span>
-                    </button>
-                  )}
-
-                  {currentRole === 'agent' && (
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('agent_space')}
-                      className="px-5 py-3 min-h-[48px] bg-white hover:bg-slate-100 text-emerald-950 text-xs sm:text-sm font-bold rounded-xl shadow-lg transition-colors inline-flex items-center gap-2 whitespace-nowrap"
-                    >
-                      <Wrench className="w-4 h-4 text-emerald-700" />
-                      <span>Espace Agent (GPS & Photos)</span>
-                    </button>
-                  )}
-
-                  {(currentRole === 'admin' || isActualAdmin) && (
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('admin')}
-                      className="px-5 py-3 min-h-[48px] bg-emerald-950 hover:bg-emerald-900 text-emerald-100 text-xs sm:text-sm font-bold rounded-xl border border-emerald-700 transition-colors inline-flex items-center gap-2 whitespace-nowrap"
-                    >
-                      <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                      <span>Bureau Administrateur</span>
-                    </button>
-                  )}
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setActivePromotion(null);
-                      setShowVehicleMobilityModal(true);
-                    }}
-                    className="px-5 py-3 min-h-[48px] bg-white/15 hover:bg-white/25 backdrop-blur-md text-white text-xs sm:text-sm font-semibold rounded-xl border border-white/25 transition-colors inline-flex items-center gap-2 whitespace-nowrap"
-                  >
-                    <Car className="w-4 h-4" />
-                    <span>Véhicules & Mobilité</span>
-                  </button>
-                </div>
               </div>
             </section>
 
-            {/* Quick-Access Role Cards */}
-            <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <button
-                type="button"
-                onClick={() => setActiveTab('mes_reservations')}
-                className="text-left bg-white hover:border-emerald-700 border border-slate-200 rounded-2xl p-5 shadow-sm transition-colors flex items-start justify-between gap-4"
-              >
-                <div className="space-y-1.5">
-                  <div className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                    <Navigation className="w-4 h-4 text-emerald-700" />
-                    <span>Mes Réservations & GPS</span>
-                  </div>
-                  <p className="text-xs text-slate-600 leading-relaxed">
-                    Partagez votre GPS client, suivez vos agents en direct, écrivez au gérant sur WhatsApp ou publiez un avis.
-                  </p>
-                </div>
-                <ChevronRight className="w-4 h-4 text-slate-400 shrink-0 mt-1" />
-              </button>
-
-              {isManagerOrAdmin ? (
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('suivi_commande')}
-                  className="text-left bg-emerald-900 hover:bg-emerald-800 text-white rounded-2xl p-5 shadow-sm transition-colors flex items-start justify-between gap-4"
-                >
-                  <div className="space-y-1.5">
-                    <div className="text-sm font-bold flex items-center gap-2">
-                      <ClipboardList className="w-4 h-4 text-emerald-300" />
-                      <span>Suivi et Commande</span>
-                    </div>
-                    <p className="text-xs text-emerald-100 leading-relaxed">
-                      Validez/refusez les commandes, modifiez vos tarifs d'accueil en direct et suivez les GPS clients & agents.
-                    </p>
-                  </div>
-                  <ChevronRight className="w-4 h-4 text-emerald-300 shrink-0 mt-1" />
-                </button>
-              ) : (
+            {/* Quick-Access Vehicle Card (Mes Réservations & GPS, Suivi et Commande et Vélo/Moto/Quad supprimés) */}
+            {!isManagerOrAdmin && services.some((s) => s.id === 'srv-5') && (
+              <section>
                 <button
                   type="button"
                   onClick={() => {
-                    setActivePromotion(null);
-                    setShowVehicleMobilityModal(true);
+                    const fourWheelSrv = services.find((s) => s.id === 'srv-5');
+                    if (fourWheelSrv) openServiceConfigurator(fourWheelSrv, 'order', null);
                   }}
-                  className="text-left bg-white hover:border-emerald-700 border border-slate-200 rounded-2xl p-5 shadow-sm transition-colors flex items-start justify-between gap-4"
+                  className="w-full text-left bg-white hover:border-emerald-700 border border-slate-200 rounded-2xl p-5 shadow-sm transition-colors flex items-start justify-between gap-4"
                 >
                   <div className="space-y-1.5">
                     <div className="text-sm font-bold text-slate-900 flex items-center gap-2">
                       <Car className="w-4 h-4 text-emerald-700" />
-                      <span>Véhicules & Mobilité</span>
+                      <span>Nettoyage Véhicules à 4 roues</span>
                     </div>
                     <p className="text-xs text-slate-600 leading-relaxed">
-                      Choisissez entre un vélo, une moto ou un véhicule à 4 roues (avec marque et nombre de places).
+                      Nettoyage intérieur complet pour citadine, berline, SUV, pick-up et camion.
                     </p>
                   </div>
                   <ChevronRight className="w-4 h-4 text-slate-400 shrink-0 mt-1" />
                 </button>
-              )}
-
-              <button
-                type="button"
-                onClick={() => {
-                  setActivePromotion(null);
-                  const btpSrv = services.find((s) => s.category === 'BTP');
-                  if (btpSrv) setSelectedService(btpSrv);
-                }}
-                className="text-left bg-white hover:border-emerald-700 border border-slate-200 rounded-2xl p-5 shadow-sm transition-colors flex items-start justify-between gap-4"
-              >
-                <div className="space-y-1.5">
-                  <div className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                    <HardHat className="w-4 h-4 text-emerald-700" />
-                    <span>Nettoyage après travaux BTP</span>
-                  </div>
-                  <p className="text-xs text-slate-600 leading-relaxed">
-                    Remise en état de chantiers, villas et bureaux neufs : poussière de ciment, vitres et sols.
-                  </p>
-                </div>
-                <ChevronRight className="w-4 h-4 text-slate-400 shrink-0 mt-1" />
-              </button>
-            </section>
+              </section>
+            )}
 
             {/* DEDICATED PROMOTIONS SECTION (Live Active Company Announcements) */}
             {approvedPromotions.length > 0 && (
@@ -3501,7 +3418,7 @@ export default function App() {
                   <div>
                     <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
                       <Megaphone className="w-5 h-5 text-emerald-700" />
-                      <span>Promotions & Offres en Cours</span>
+                      <span>Promotions &amp; Offres en Cours</span>
                     </h2>
                     <p className="text-xs text-slate-600 mt-0.5">
                       Offres promotionnelles publiées en direct par nos partenaires {APP_OFFICIAL_NAME}.
@@ -3519,7 +3436,7 @@ export default function App() {
                         <div className="flex items-center justify-between text-xs text-emerald-200">
                           <span className="font-bold text-amber-300">{promo.discountLabel}</span>
                           <span>
-                            {promo.companyName} · Jusqu'au {promo.validUntil}
+                            {promo.companyName} · Jusqu&apos;au {promo.validUntil}
                           </span>
                         </div>
                         <h3 className="text-base font-bold text-white">{promo.title}</h3>
@@ -3531,19 +3448,17 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => {
-                          setActivePromotion(promo);
                           const matchedService = matchServiceForPromotion(promo, services);
                           if (matchedService) {
-                            setSelectedService(matchedService);
-                          } else if (promo.serviceCategory === 'Véhicules') {
-                            setShowVehicleMobilityModal(true);
+                            openServiceConfigurator(matchedService, 'order', promo);
                           } else {
+                            setActivePromotion(promo);
                             setActiveTab('services');
                           }
                         }}
                         className="self-start px-4 py-2 min-h-[40px] bg-white hover:bg-emerald-50 text-emerald-950 text-xs font-bold rounded-xl transition-colors inline-flex items-center gap-1.5"
                       >
-                        <span>Profiter de l'offre</span>
+                        <span>Profiter de l&apos;offre</span>
                         <ArrowRight className="w-3.5 h-3.5" />
                       </button>
                     </div>
@@ -3552,15 +3467,15 @@ export default function App() {
               </section>
             )}
 
-            {/* UNIFIED SERVICES CATALOG ON HOME */}
+            {/* SERVICES CATALOG ON HOME (SANS PRIX SUR LES CARTES) */}
             <section className="space-y-5">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                   <h2 className="text-xl font-bold text-slate-900">
-                    Catalogue & Tarifs du Marché (Libreville)
+                    Nos Services
                   </h2>
                   <p className="text-xs text-slate-600 mt-0.5">
-                    Tarifs de base actualisés en temps réel par le gérant de l'entreprise.
+                    Configurez chaque prestation selon vos besoins et calculez votre devis en temps réel en FCFA.
                   </p>
                 </div>
 
@@ -3583,16 +3498,7 @@ export default function App() {
                         : 'text-slate-600'
                     }`}
                   >
-                    Véhicules & Mobilité
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setServiceFilter('btp')}
-                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap ${
-                      serviceFilter === 'btp' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'
-                    }`}
-                  >
-                    Travaux BTP
+                    Véhicules
                   </button>
                   <button
                     type="button"
@@ -3601,115 +3507,69 @@ export default function App() {
                       serviceFilter === 'home' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'
                     }`}
                   >
-                    Maison & Bureaux
+                    Mobilier &amp; Vitrerie
                   </button>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {/* Unified Véhicules & Mobilité Card */}
-                {showUnifiedVehicleCard && (
-                  <div className="bg-white rounded-2xl border-2 border-emerald-700/25 overflow-hidden shadow-sm flex flex-col justify-between">
-                    <div>
-                      <div className="h-48 overflow-hidden bg-slate-100">
-                        <img
-                          src="/src/assets/images/car_shine_alp_1795029311865.jpg"
-                          alt="Véhicules et Mobilité Shine-x-Sanitize Alp Group"
-                          className="w-full h-full object-cover"
-                          referrerPolicy="no-referrer"
-                        />
-                      </div>
-                      <div className="p-5 space-y-2">
-                        <div className="text-xs font-semibold text-emerald-800 flex items-center gap-2">
-                          <span>Véhicules & Mobilité</span>
-                          <span aria-hidden="true">·</span>
-                          <span>Vélo · Moto · 4 Roues</span>
-                          <span aria-hidden="true">·</span>
-                          <span className="font-bold tabular-nums">
-                            Dès {minVehiclePrice.toLocaleString()} XAF
-                          </span>
+                {visibleCatalogServices.map((service) => {
+                  const isFourWheel = service.id === 'srv-5' || service.vehicleType === '4_wheels';
+                  return (
+                    <div
+                      key={service.id}
+                      className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm flex flex-col justify-between"
+                    >
+                      <div>
+                        <div className="h-48 overflow-hidden bg-slate-100">
+                          <img
+                            src={service.image}
+                            alt={service.name}
+                            className="w-full h-full object-cover"
+                            referrerPolicy="no-referrer"
+                          />
                         </div>
-                        <h3 className="text-base font-bold text-slate-900">
-                          Nettoyage Véhicules & Mobilité
-                        </h3>
-                        <p className="text-xs text-slate-600 leading-relaxed">
-                          Cliquez pour sélectionner précisément votre véhicule : vélo, moto/scooter ou véhicule à 4 roues (avec marque et nombre de places).
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="p-5 pt-0">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setActivePromotion(null);
-                          setShowVehicleMobilityModal(true);
-                        }}
-                        className="w-full py-2.5 min-h-[44px] px-4 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-2"
-                      >
-                        <Car className="w-4 h-4" />
-                        <span>Choisir Vélo, Moto ou 4 Roues</span>
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Other Services including Nettoyage après travaux BTP */}
-                {visibleNonVehicleServices.map((service) => (
-                  <div
-                    key={service.id}
-                    className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm flex flex-col justify-between"
-                  >
-                    <div>
-                      <div className="h-48 overflow-hidden bg-slate-100">
-                        <img
-                          src={service.image}
-                          alt={service.name}
-                          className="w-full h-full object-cover"
-                          referrerPolicy="no-referrer"
-                        />
-                      </div>
-                      <div className="p-5 space-y-2">
-                        <div className="text-xs font-medium text-emerald-800 flex items-center gap-2">
-                          <span>{service.category}</span>
-                          <span aria-hidden="true">·</span>
-                          <span>{service.duration}</span>
-                          <span aria-hidden="true">·</span>
-                          <span className="font-bold tabular-nums">
-                            {service.basePrice.toLocaleString()} XAF
-                          </span>
+                        <div className="p-5 space-y-2">
+                          <div className="text-xs font-medium text-emerald-800 flex items-center gap-2">
+                            <span>{service.category}</span>
+                            <span aria-hidden="true">·</span>
+                            <span>{service.duration}</span>
+                          </div>
+                          <h3 className="text-base font-bold text-slate-900">{service.name}</h3>
+                          <p className="text-xs text-slate-600 leading-relaxed">
+                            {service.description}
+                          </p>
+                          {isFourWheel && (
+                            <div className="mt-2 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2 text-[11px] font-medium text-amber-950 flex items-start gap-1.5">
+                              <Info className="w-3.5 h-3.5 text-amber-700 shrink-0 mt-0.5" />
+                              <span>{VEHICLE_4W_INTERIOR_NOTE}</span>
+                            </div>
+                          )}
                         </div>
-                        <h3 className="text-base font-bold text-slate-900">{service.name}</h3>
-                        <p className="text-xs text-slate-600 leading-relaxed">
-                          {service.description}
-                        </p>
+                      </div>
+
+                      <div className="p-5 pt-0 space-y-2">
+                        <button
+                          type="button"
+                          onClick={() => openServiceConfigurator(service, 'order', null)}
+                          className="w-full py-2.5 min-h-[44px] px-4 bg-slate-900 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-2"
+                        >
+                          <Sliders className="w-3.5 h-3.5" />
+                          <span>Configurer &amp; Réserver</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => openServiceConfigurator(service, 'cart', null)}
+                          className="w-full py-2.5 min-h-[44px] px-4 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-900 text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-2"
+                        >
+                          <ShoppingCart className="w-3.5 h-3.5 text-emerald-700" />
+                          <span>Ajouter au panier</span>
+                        </button>
                       </div>
                     </div>
-
-                    <div className="p-5 pt-0 space-y-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setActivePromotion(null);
-                          setSelectedService(service);
-                        }}
-                        className="w-full py-2.5 min-h-[44px] px-4 bg-slate-900 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-2"
-                      >
-                        <Sliders className="w-3.5 h-3.5" />
-                        <span>Configurer & Réserver</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => handleQuickAddServiceToCart(service, null)}
-                        className="w-full py-2.5 min-h-[44px] px-4 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-900 text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-2"
-                      >
-                        <ShoppingCart className="w-3.5 h-3.5 text-emerald-700" />
-                        <span>Ajouter au panier</span>
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </section>
           </div>
@@ -3721,10 +3581,10 @@ export default function App() {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
                 <h1 className="text-2xl font-bold text-slate-900">
-                  Services, BTP & Véhicules — {APP_OFFICIAL_NAME}
+                  Catalogue des Services — {APP_OFFICIAL_NAME}
                 </h1>
                 <p className="text-xs text-slate-600 mt-1">
-                  Choisissez la catégorie souhaitée et négociez directement votre devis selon les tarifs du marché.
+                  Choisissez la prestation souhaitée, sélectionnez vos éléments et obtenez votre devis instantané en FCFA.
                 </p>
               </div>
             </div>
@@ -3750,92 +3610,59 @@ export default function App() {
             )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {/* Unified Vehicle Card */}
-              <div className="bg-white rounded-2xl border-2 border-emerald-700/25 overflow-hidden shadow-sm flex flex-col justify-between">
-                <div>
-                  <div className="h-44 overflow-hidden bg-slate-100">
-                    <img
-                      src="/src/assets/images/car_shine_alp_1795029311865.jpg"
-                      alt="Véhicules et Mobilité"
-                      className="w-full h-full object-cover"
-                      referrerPolicy="no-referrer"
-                    />
-                  </div>
-                  <div className="p-5 space-y-2">
-                    <div className="text-xs font-semibold text-emerald-800 flex items-center gap-2">
-                      <span>Véhicules & Mobilité</span>
-                      <span aria-hidden="true">·</span>
-                      <span className="font-bold tabular-nums">
-                        Dès {minVehiclePrice.toLocaleString()} XAF
-                      </span>
-                    </div>
-                    <h3 className="text-base font-bold text-slate-900">
-                      Nettoyage Véhicules & Mobilité
-                    </h3>
-                    <p className="text-xs text-slate-600 leading-relaxed">
-                      Sous-menu dédié : Vélo, Moto ou Véhicule à 4 roues (Voiture / SUV / 4x4 avec marque et nombre de places).
-                    </p>
-                  </div>
-                </div>
-                <div className="p-5 pt-0">
-                  <button
-                    type="button"
-                    onClick={() => setShowVehicleMobilityModal(true)}
-                    className="w-full py-2.5 min-h-[44px] bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-xl transition-colors"
+              {services.map((service) => {
+                const isFourWheel = service.id === 'srv-5' || service.vehicleType === '4_wheels';
+                return (
+                  <div
+                    key={service.id}
+                    className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm flex flex-col justify-between"
                   >
-                    Ouvrir le sous-menu Véhicules
-                  </button>
-                </div>
-              </div>
-
-              {nonVehicleServices.map((service) => (
-                <div
-                  key={service.id}
-                  className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm flex flex-col justify-between"
-                >
-                  <div>
-                    <div className="h-44 overflow-hidden bg-slate-100">
-                      <img
-                        src={service.image}
-                        alt={service.name}
-                        className="w-full h-full object-cover"
-                        referrerPolicy="no-referrer"
-                      />
-                    </div>
-                    <div className="p-5 space-y-2">
-                      <div className="text-xs font-medium text-emerald-800 flex items-center gap-2">
-                        <span>{service.category}</span>
-                        <span aria-hidden="true">·</span>
-                        <span>{service.duration}</span>
-                        <span aria-hidden="true">·</span>
-                        <span className="font-bold tabular-nums">
-                          {service.basePrice.toLocaleString()} XAF
-                        </span>
+                    <div>
+                      <div className="h-44 overflow-hidden bg-slate-100">
+                        <img
+                          src={service.image}
+                          alt={service.name}
+                          className="w-full h-full object-cover"
+                          referrerPolicy="no-referrer"
+                        />
                       </div>
-                      <h3 className="text-base font-bold text-slate-900">{service.name}</h3>
-                      <p className="text-xs text-slate-600 leading-relaxed">{service.description}</p>
+                      <div className="p-5 space-y-2">
+                        <div className="text-xs font-medium text-emerald-800 flex items-center gap-2">
+                          <span>{service.category}</span>
+                          <span aria-hidden="true">·</span>
+                          <span>{service.duration}</span>
+                        </div>
+                        <h3 className="text-base font-bold text-slate-900">{service.name}</h3>
+                        <p className="text-xs text-slate-600 leading-relaxed">{service.description}</p>
+                        {isFourWheel && (
+                          <div className="mt-2 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2 text-[11px] font-medium text-amber-950 flex items-start gap-1.5">
+                            <Info className="w-3.5 h-3.5 text-amber-700 shrink-0 mt-0.5" />
+                            <span>{VEHICLE_4W_INTERIOR_NOTE}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div className="p-5 pt-0 space-y-2">
+                      <button
+                        type="button"
+                        onClick={() => openServiceConfigurator(service, 'order')}
+                        className="w-full py-2.5 min-h-[44px] bg-slate-900 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl transition-colors"
+                      >
+                        Lancer le Configurateur
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => openServiceConfigurator(service, 'cart')}
+                        className="w-full py-2.5 min-h-[44px] px-4 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-900 text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-2"
+                      >
+                        <ShoppingCart className="w-3.5 h-3.5 text-emerald-700" />
+                        <span>Ajouter au panier</span>
+                      </button>
                     </div>
                   </div>
-                  <div className="p-5 pt-0 space-y-2">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedService(service)}
-                      className="w-full py-2.5 min-h-[44px] bg-slate-900 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl transition-colors"
-                    >
-                      Lancer le Configurateur
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleQuickAddServiceToCart(service)}
-                      className="w-full py-2.5 min-h-[44px] px-4 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-900 text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-2"
-                    >
-                      <ShoppingCart className="w-3.5 h-3.5 text-emerald-700" />
-                      <span>Ajouter au panier</span>
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
@@ -3844,6 +3671,7 @@ export default function App() {
         {activeTab === 'panier' && (
           <CartView
             items={cartItems}
+            selectedExtras={cartExtras}
             catalogServices={services}
             availablePromotions={approvedPromotions}
             selectedCartPromotion={cartPromotion}
@@ -3853,6 +3681,7 @@ export default function App() {
             isSubmitting={isSubmittingCartOrder}
             submitError={cartSubmitError}
             onSelectCartPromotion={setCartPromotion}
+            onToggleExtra={handleToggleCartExtra}
             onUpdateQuantity={handleUpdateCartQuantity}
             onRemoveItem={handleRemoveCartItem}
             onClearCart={handleClearCart}
@@ -3984,28 +3813,6 @@ export default function App() {
         <div>Airtel Money · Moov Money · Espèces · Carte bancaire</div>
       </footer>
 
-      {/* UNIFIED VEHICLE & MOBILITY SUB-MENU MODAL */}
-      {showVehicleMobilityModal && (
-        <VehicleMobilityModal
-          vehicleServices={vehicleServices}
-          appliedPromotion={activePromotion}
-          onClearPromotion={() => setActivePromotion(null)}
-          onSelectVehicleService={(srv) => {
-            setShowVehicleMobilityModal(false);
-            setSelectedService(srv);
-          }}
-          onQuickAddVehicleToCart={(srv) => {
-            handleQuickAddServiceToCart(srv);
-            setShowVehicleMobilityModal(false);
-            setActivePromotion(null);
-          }}
-          onClose={() => {
-            setShowVehicleMobilityModal(false);
-            setActivePromotion(null);
-          }}
-        />
-      )}
-
       {/* SMART SERVICE CONFIGURATOR MODAL */}
       {selectedService && (
         <ServiceConfiguratorModal
@@ -4014,10 +3821,12 @@ export default function App() {
           defaultClientName={userProfile?.displayName || ''}
           defaultClientPhone={userProfile?.phone || '+241 '}
           appliedPromotion={activePromotion}
+          initialIntent={configuratorIntent}
           onRemovePromotion={() => setActivePromotion(null)}
           onClose={() => {
             setSelectedService(null);
             setActivePromotion(null);
+            setConfiguratorIntent('order');
           }}
           onSubmitBooking={handleCreateBooking}
           onAddToCart={handleAddConfiguredItemToCart}
