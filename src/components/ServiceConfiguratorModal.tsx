@@ -72,18 +72,22 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
 }) => {
   const isFourWheelService = service.id === 'srv-5' || service.vehicleType === '4_wheels';
   const isTwoWheelService = service.id === TWO_WHEEL_VEHICLE_QUOTE_OPTION.id;
+  const includeTwoWheelOption = isTwoWheelService || preselectTwoWheel;
   const quoteOptions = getServiceQuoteOptions(service.id).filter(
     (opt) => opt.id !== TWO_WHEEL_VEHICLE_QUOTE_OPTION.id
   );
-  const allQuoteOptions = [...quoteOptions, TWO_WHEEL_VEHICLE_QUOTE_OPTION];
+  const allQuoteOptions = includeTwoWheelOption
+    ? [...quoteOptions, TWO_WHEEL_VEHICLE_QUOTE_OPTION]
+    : quoteOptions;
 
   const [quantities, setQuantities] = useState<Record<string, number>>(() => {
     const initial: Record<string, number> = {};
     quoteOptions.forEach((opt) => {
       initial[opt.id] = 0;
     });
-    initial[TWO_WHEEL_VEHICLE_QUOTE_OPTION.id] =
-      preselectTwoWheel || isTwoWheelService ? 1 : 0;
+    if (includeTwoWheelOption) {
+      initial[TWO_WHEEL_VEHICLE_QUOTE_OPTION.id] = 1;
+    }
     return initial;
   });
   const [selectedExtraIds, setSelectedExtraIds] = useState<string[]>([]);
@@ -472,8 +476,9 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl max-w-2xl w-full p-6 sm:p-8 space-y-5 shadow-2xl border border-slate-200 relative my-8">
+    <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm overflow-y-auto p-3 sm:p-5">
+      <div className="min-h-full flex flex-col items-center">
+        <div className="bg-white rounded-2xl max-w-2xl w-full p-4 sm:p-6 space-y-4 shadow-2xl border border-slate-200 relative my-auto">
         <button
           type="button"
           onClick={onClose}
@@ -530,20 +535,19 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
         )}
 
         <form onSubmit={handleSubmit} className="space-y-5">
-          {/* CONFIGURATEUR DE DEVIS EN TEMPS RÉEL (SÉLECTEUR DE QUANTITÉ 0, 1, 2...) */}
-          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+          {/* CONFIGURATEUR DE DEVIS EN TEMPS RÉEL (FORMAT MINIATURE COMPACT) */}
+          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3 space-y-2.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2 text-xs font-bold text-slate-900">
-                <Receipt className="w-4 h-4 text-emerald-700 shrink-0" />
-                <span>Sélectionnez les éléments et quantités (Devis en FCFA)</span>
+              <div className="flex items-center gap-1.5 text-xs font-bold text-slate-900">
+                <Receipt className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                <span>Sélectionnez les éléments et quantités (FCFA)</span>
               </div>
               <span className="text-[11px] font-semibold text-emerald-800 tabular-nums">
-                {totalSelectedUnits} élément{totalSelectedUnits > 1 ? 's' : ''} sélectionné
-                {totalSelectedUnits > 1 ? 's' : ''}
+                {totalSelectedUnits} sélectionné{totalSelectedUnits > 1 ? 's' : ''}
               </span>
             </div>
 
-            <div className="divide-y divide-slate-200 bg-white border border-slate-200 rounded-xl overflow-hidden">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
               {quoteOptions.map((opt) => {
                 const qty = Math.max(0, Math.round(quantities[opt.id] || 0));
                 const lineSubtotal = qty * opt.unitPrice;
@@ -552,35 +556,37 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
                 return (
                   <div
                     key={opt.id}
-                    className={`px-3.5 py-3 flex items-center justify-between gap-3 transition-colors ${
-                      isActive ? 'bg-emerald-50/50' : 'bg-white'
+                    className={`px-2 py-1.5 rounded-lg border flex flex-col justify-between gap-1.5 min-w-0 transition-colors ${
+                      isActive
+                        ? 'bg-emerald-50/70 border-emerald-400'
+                        : 'bg-white border-slate-200'
                     }`}
                   >
                     <div className="min-w-0">
-                      <div className="text-xs sm:text-sm font-semibold text-slate-900">
+                      <div className="text-[11px] font-semibold text-slate-900 leading-tight break-words">
                         {opt.label}
                       </div>
-                      <div className="text-[11px] text-slate-500 tabular-nums">
-                        {opt.unitPrice.toLocaleString('fr-FR')} FCFA / unité
+                      <div className="text-[10px] text-slate-500 tabular-nums leading-tight mt-0.5">
+                        {opt.unitPrice.toLocaleString('fr-FR')} FCFA
                         {isActive && (
-                          <span className="ml-2 font-bold text-emerald-800">
-                            · Sous-total : {lineSubtotal.toLocaleString('fr-FR')} FCFA
+                          <span className="ml-1 font-bold text-emerald-800">
+                            · {lineSubtotal.toLocaleString('fr-FR')}
                           </span>
                         )}
                       </div>
                     </div>
 
-                    <div className="inline-flex items-center border border-slate-200 rounded-xl bg-slate-50 p-0.5 shrink-0">
+                    <div className="inline-flex items-center justify-between border border-slate-200 rounded-md bg-slate-50 p-0.5 self-start">
                       <button
                         type="button"
                         aria-label={`Diminuer la quantité pour ${opt.label}`}
                         disabled={qty <= 0}
                         onClick={() => handleQuantityChange(opt.id, -1)}
-                        className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-700 hover:bg-white disabled:opacity-35 transition-colors"
+                        className="w-6 h-6 rounded flex items-center justify-center text-slate-700 hover:bg-white disabled:opacity-35 transition-colors"
                       >
-                        <Minus className="w-3.5 h-3.5" />
+                        <Minus className="w-3 h-3" />
                       </button>
-                      <span className="w-9 text-center text-xs font-bold text-slate-900 tabular-nums">
+                      <span className="w-6 text-center text-[11px] font-bold text-slate-900 tabular-nums">
                         {qty}
                       </span>
                       <button
@@ -588,115 +594,116 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
                         aria-label={`Augmenter la quantité pour ${opt.label}`}
                         disabled={qty >= 20}
                         onClick={() => handleQuantityChange(opt.id, 1)}
-                        className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-700 hover:bg-white disabled:opacity-35 transition-colors"
+                        className="w-6 h-6 rounded flex items-center justify-center text-slate-700 hover:bg-white disabled:opacity-35 transition-colors"
                       >
-                        <Plus className="w-3.5 h-3.5" />
+                        <Plus className="w-3 h-3" />
                       </button>
                     </div>
                   </div>
                 );
               })}
 
-              {/* Option intégrée : Nettoyage de Vélo, Moto & Quad (5 000 FCFA fixe par véhicule) */}
-              <div
-                className={`px-3.5 py-3 flex items-center justify-between gap-3 transition-colors ${
-                  twoWheelQty > 0 ? 'bg-emerald-50/60' : 'bg-slate-50/40'
-                }`}
-              >
-                <div className="min-w-0 space-y-0.5">
-                  <div className="text-xs sm:text-sm font-semibold text-slate-900 flex items-center gap-1.5">
-                    <Bike className="w-4 h-4 text-emerald-700 shrink-0" />
-                    <span>{TWO_WHEEL_VEHICLE_QUOTE_OPTION.label}</span>
+              {includeTwoWheelOption && (
+                <div
+                  className={`px-2.5 py-1.5 rounded-lg border flex items-center justify-between gap-2 transition-colors col-span-2 sm:col-span-3 ${
+                    twoWheelQty > 0
+                      ? 'bg-emerald-50/70 border-emerald-400'
+                      : 'bg-white border-slate-200'
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <div className="text-[11px] sm:text-xs font-semibold text-slate-900 leading-tight flex items-center gap-1.5">
+                      <Bike className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                      <span>{TWO_WHEEL_VEHICLE_QUOTE_OPTION.label}</span>
+                    </div>
+                    <div className="text-[10px] sm:text-[11px] text-slate-500 tabular-nums leading-tight">
+                      {TWO_WHEEL_VEHICLE_QUOTE_OPTION.unitPrice.toLocaleString('fr-FR')} FCFA / véhicule (vélo, moto ou quad)
+                      {twoWheelQty > 0 && (
+                        <span className="ml-1.5 font-bold text-emerald-800">
+                          · {twoWheelSubtotal.toLocaleString('fr-FR')} FCFA
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  <div className="text-[11px] text-slate-500 tabular-nums">
-                    {TWO_WHEEL_VEHICLE_QUOTE_OPTION.unitPrice.toLocaleString('fr-FR')} FCFA / véhicule (vélo, moto ou quad)
-                    {twoWheelQty > 0 && (
-                      <span className="ml-2 font-bold text-emerald-800">
-                        · Sous-total : {twoWheelSubtotal.toLocaleString('fr-FR')} FCFA
-                      </span>
-                    )}
-                  </div>
-                </div>
 
-                <div className="inline-flex items-center border border-slate-200 rounded-xl bg-slate-50 p-0.5 shrink-0">
-                  <button
-                    type="button"
-                    aria-label={`Diminuer la quantité pour ${TWO_WHEEL_VEHICLE_QUOTE_OPTION.label}`}
-                    disabled={twoWheelQty <= 0}
-                    onClick={() => handleQuantityChange(TWO_WHEEL_VEHICLE_QUOTE_OPTION.id, -1)}
-                    className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-700 hover:bg-white disabled:opacity-35 transition-colors"
-                  >
-                    <Minus className="w-3.5 h-3.5" />
-                  </button>
-                  <span className="w-9 text-center text-xs font-bold text-slate-900 tabular-nums">
-                    {twoWheelQty}
-                  </span>
-                  <button
-                    type="button"
-                    aria-label={`Augmenter la quantité pour ${TWO_WHEEL_VEHICLE_QUOTE_OPTION.label}`}
-                    disabled={twoWheelQty >= 20}
-                    onClick={() => handleQuantityChange(TWO_WHEEL_VEHICLE_QUOTE_OPTION.id, 1)}
-                    className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-700 hover:bg-white disabled:opacity-35 transition-colors"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="inline-flex items-center border border-slate-200 rounded-lg bg-slate-50 p-0.5 shrink-0">
+                    <button
+                      type="button"
+                      aria-label={`Diminuer la quantité pour ${TWO_WHEEL_VEHICLE_QUOTE_OPTION.label}`}
+                      disabled={twoWheelQty <= 0}
+                      onClick={() => handleQuantityChange(TWO_WHEEL_VEHICLE_QUOTE_OPTION.id, -1)}
+                      className="w-7 h-7 rounded-md flex items-center justify-center text-slate-700 hover:bg-white disabled:opacity-35 transition-colors"
+                    >
+                      <Minus className="w-3 h-3" />
+                    </button>
+                    <span className="w-6 text-center text-[11px] font-bold text-slate-900 tabular-nums">
+                      {twoWheelQty}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label={`Augmenter la quantité pour ${TWO_WHEEL_VEHICLE_QUOTE_OPTION.label}`}
+                      disabled={twoWheelQty >= 20}
+                      onClick={() => handleQuantityChange(TWO_WHEEL_VEHICLE_QUOTE_OPTION.id, 1)}
+                      className="w-7 h-7 rounded-md flex items-center justify-center text-slate-700 hover:bg-white disabled:opacity-35 transition-colors"
+                    >
+                      <Plus className="w-3 h-3" />
+                    </button>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
 
-            {/* SECTION SERVICES SUPPLÉMENTAIRES */}
-            <div className="bg-white border border-slate-200 rounded-xl p-3.5 space-y-2.5">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2 text-xs font-bold text-slate-900">
-                  <Sparkles className="w-4 h-4 text-emerald-700 shrink-0" />
+            {/* SECTION SERVICES SUPPLÉMENTAIRES (FORMAT MINIATURE COMPACT) */}
+            <div className="bg-white border border-slate-200 rounded-xl p-2.5 space-y-1.5">
+              <div className="flex flex-wrap items-center justify-between gap-1.5">
+                <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-900">
+                  <Sparkles className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
                   <span>Services supplémentaires (optionnels)</span>
                 </div>
-                <span className="text-[11px] font-semibold text-emerald-800 tabular-nums">
+                <span className="text-[10px] font-semibold text-emerald-800 tabular-nums">
                   {selectedExtras.length > 0
-                    ? `${selectedExtras.length} sélectionné${selectedExtras.length > 1 ? 's' : ''} · ${
+                    ? `${selectedExtras.length} · ${
                         extrasTotal === 0 ? 'Gratuit (0 FCFA)' : `+${extrasTotal.toLocaleString('fr-FR')} FCFA`
                       }`
-                    : 'Aucune option cochée'}
+                    : 'Optionnel'}
                 </span>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div className="flex flex-wrap gap-1.5">
                 {SUPPLEMENTAL_SERVICES.map((extra) => {
                   const isChecked = selectedExtraIds.includes(extra.id);
                   return (
                     <button
                       key={extra.id}
                       type="button"
+                      title={extra.description}
                       onClick={() => toggleExtra(extra.id)}
                       aria-pressed={isChecked}
-                      className={`text-left px-3 py-2.5 min-h-[44px] rounded-xl border transition-colors flex items-start justify-between gap-2.5 ${
+                      className={`text-left px-2 py-1.5 rounded-lg border transition-colors inline-flex items-center gap-1.5 max-w-full ${
                         isChecked
                           ? 'bg-emerald-50 border-emerald-500 ring-1 ring-emerald-500/30'
-                          : 'bg-slate-50/70 border-slate-200 hover:bg-slate-100'
+                          : 'bg-slate-50/80 border-slate-200 hover:bg-slate-100'
                       }`}
                     >
-                      <div className="flex items-start gap-2.5 min-w-0">
-                        <span
-                          className={`mt-0.5 w-4 h-4 rounded flex items-center justify-center shrink-0 border ${
-                            isChecked
-                              ? 'bg-emerald-700 border-emerald-700 text-white'
-                              : 'bg-white border-slate-300'
-                          }`}
-                        >
-                          {isChecked && <Check className="w-3 h-3" />}
-                        </span>
-                        <div className="min-w-0">
-                          <div className="text-xs font-semibold text-slate-900">{extra.label}</div>
-                          {extra.description && (
-                            <div className="text-[11px] text-slate-500 leading-snug">
-                              {extra.description}
-                            </div>
-                          )}
-                        </div>
-                      </div>
                       <span
-                        className={`text-[11px] font-bold tabular-nums shrink-0 ${
-                          extra.price === 0 ? 'text-emerald-700' : 'text-slate-900'
+                        className={`w-3.5 h-3.5 rounded flex items-center justify-center shrink-0 border ${
+                          isChecked
+                            ? 'bg-emerald-700 border-emerald-700 text-white'
+                            : 'bg-white border-slate-300'
+                        }`}
+                      >
+                        {isChecked && <Check className="w-2.5 h-2.5" />}
+                      </span>
+                      <span className="text-[11px] font-semibold text-slate-900 leading-tight">
+                        {extra.label}
+                      </span>
+                      <span
+                        className={`px-1.5 py-0.5 rounded text-[10px] font-bold tabular-nums shrink-0 ${
+                          extra.price === 0
+                            ? 'bg-emerald-100/80 text-emerald-800'
+                            : isChecked
+                            ? 'bg-emerald-100 text-emerald-950'
+                            : 'bg-white border border-slate-200 text-slate-800'
                         }`}
                       >
                         {extra.price === 0
@@ -1060,6 +1067,7 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
             </div>
           </div>
         </form>
+        </div>
       </div>
     </div>
   );

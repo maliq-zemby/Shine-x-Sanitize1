@@ -136,7 +136,7 @@ export const SERVICE_QUOTE_OPTIONS: Record<string, { id: string; label: string; 
   'srv-1': [
     { id: 'pouf', label: 'Pouf', unitPrice: 2500 },
     { id: 'chaise', label: 'Chaise', unitPrice: 2500 },
-    { id: 'fauteuil-1', label: 'Fauteuil 1 place', unitPrice: 5000 },
+    { id: 'fauteuil-1', label: 'Canapé 1 place', unitPrice: 5000 },
     { id: 'canape-2', label: 'Canapé 2 places', unitPrice: 10000 },
     { id: 'canape-3', label: 'Canapé 3 places', unitPrice: 15000 },
     { id: 'canape-l', label: 'Canapé en L', unitPrice: 25000 },
