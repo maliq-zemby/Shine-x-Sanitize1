@@ -87,7 +87,7 @@ export const VEHICLE_BRANDS = [
 export const VEHICLE_SEAT_OPTIONS = [2, 4, 5, 7, 9];
 
 export const VEHICLE_4W_INTERIOR_NOTE =
-  'Note importante : Les prestations sur véhicules concernent exclusivement le nettoyage intérieur.';
+  'Nettoyage intérieur uniquement : cette prestation concerne exclusivement l’intérieur du véhicule (citadine, berline, SUV, pick-up / 4x4).';
 
 export const SUPPLEMENTAL_SERVICES: SupplementalServiceOption[] = [
   {
@@ -122,6 +122,16 @@ export const SUPPLEMENTAL_SERVICES: SupplementalServiceOption[] = [
   },
 ];
 
+export const TWO_WHEEL_VEHICLE_QUOTE_OPTION = {
+  id: 'velo-moto-quad',
+  label: 'Nettoyage de Vélo, Moto & Quad',
+  unitPrice: 5000,
+  serviceCategory: 'Véhicules' as const,
+  duration: '45min - 1h15',
+  image: '/src/assets/images/moto_shine_alp_1795029315085.jpg',
+  description: 'Tarif fixe de 5 000 FCFA par véhicule (vélo, moto ou quad)',
+};
+
 export const SERVICE_QUOTE_OPTIONS: Record<string, { id: string; label: string; unitPrice: number }[]> = {
   'srv-1': [
     { id: 'pouf', label: 'Pouf', unitPrice: 2500 },
@@ -150,11 +160,13 @@ export const SERVICE_QUOTE_OPTIONS: Record<string, { id: string; label: string; 
     { id: 'fenetre', label: 'Fenêtre', unitPrice: 4000 },
   ],
   'srv-5': [
-    { id: 'citadine', label: 'Citadine', unitPrice: 15000 },
-    { id: 'berline', label: 'Berline', unitPrice: 25000 },
-    { id: 'suv', label: 'SUV', unitPrice: 35000 },
-    { id: 'pickup', label: 'Pick-up', unitPrice: 55000 },
-    { id: 'camion', label: 'Camion', unitPrice: 65000 },
+    { id: 'citadine', label: 'Citadine', unitPrice: 10000 },
+    { id: 'berline', label: 'Berline', unitPrice: 15000 },
+    { id: 'suv', label: 'SUV', unitPrice: 20000 },
+    { id: 'pickup-4x4', label: 'Pick-up / 4x4', unitPrice: 25000 },
+  ],
+  'velo-moto-quad': [
+    { id: 'velo-moto-quad', label: 'Nettoyage de Vélo, Moto & Quad', unitPrice: 5000 },
   ],
 };
 
@@ -236,12 +248,26 @@ export const SERVICES: ServiceItem[] = [
     name: 'Nettoyage Véhicules à 4 roues',
     category: 'Véhicules',
     vehicleType: '4_wheels',
-    basePrice: 15000,
-    duration: '1h30 - 2h30',
+    basePrice: 10000,
+    duration: '1h30 - 3h',
     description:
-      'Nettoyage intérieur complet à domicile pour citadine, berline, SUV, pick-up et camion : aspiration, shampouinage des sièges et désinfection habitacle.',
+      'Nettoyage intérieur uniquement pour citadine, berline, SUV et pick-up / 4x4 : aspiration complète, injection-extraction des sièges, moquettes, garnitures et tableau de bord.',
     image: '/src/assets/images/car_shine_alp_1795029311865.jpg',
-    materials: ['Sellerie Tissu', 'Sellerie Cuir', 'Similicuir & Alcantara'],
+    materials: ['Tissu / Sellerie standard', 'Cuir / Simili cuir', 'Alcantara', 'Sellerie mixte'],
+    availableOptions: [],
+    updatedAt: '2026-11-24T08:00:00Z',
+  },
+  {
+    id: 'velo-moto-quad',
+    name: 'Nettoyage Vélo, Moto & Quad',
+    category: 'Véhicules',
+    vehicleType: 'moto',
+    basePrice: 5000,
+    duration: '45min - 1h15',
+    description:
+      'Lavage complet et dégraissage haute précision à domicile pour vélo, moto et quad (cadre, carénage, jantes et finition soignée).',
+    image: '/src/assets/images/moto_shine_alp_1795029315085.jpg',
+    materials: ['Standard (Vélo / Moto / Quad)', 'Moto routière / Sportive', 'Quad tout-terrain', 'Vélo / VTT'],
     availableOptions: [],
     updatedAt: '2026-11-24T08:00:00Z',
   },

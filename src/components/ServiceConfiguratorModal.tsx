@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   AlertTriangle,
-  Car,
+  Bike,
   Check,
   Info,
   LocateFixed,
@@ -16,8 +16,8 @@ import {
 import {
   COMMUNES,
   SUPPLEMENTAL_SERVICES,
+  TWO_WHEEL_VEHICLE_QUOTE_OPTION,
   VEHICLE_4W_INTERIOR_NOTE,
-  VEHICLE_BRANDS,
   getServiceQuoteOptions,
 } from '../data/mockData';
 import {
@@ -47,10 +47,14 @@ interface ServiceConfiguratorModalProps {
   defaultClientPhone?: string;
   appliedPromotion?: Promotion | null;
   initialIntent?: 'order' | 'cart';
+  preselectTwoWheel?: boolean;
   onRemovePromotion?: () => void;
   onClose: () => void;
   onSubmitBooking: (booking: Booking) => void;
-  onAddToCart?: (item: CartItem, selectedExtras?: SupplementalServiceOption[]) => void;
+  onAddToCart?: (
+    items: CartItem | CartItem[],
+    selectedExtras?: SupplementalServiceOption[]
+  ) => void;
 }
 
 export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> = ({
@@ -60,20 +64,26 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
   defaultClientPhone = '+241 ',
   appliedPromotion = null,
   initialIntent = 'order',
+  preselectTwoWheel = false,
   onRemovePromotion,
   onClose,
   onSubmitBooking,
   onAddToCart,
 }) => {
-  const isFourWheelVehicle = service.id === 'srv-5' || service.vehicleType === '4_wheels';
-
-  const quoteOptions = getServiceQuoteOptions(service.id);
+  const isFourWheelService = service.id === 'srv-5' || service.vehicleType === '4_wheels';
+  const isTwoWheelService = service.id === TWO_WHEEL_VEHICLE_QUOTE_OPTION.id;
+  const quoteOptions = getServiceQuoteOptions(service.id).filter(
+    (opt) => opt.id !== TWO_WHEEL_VEHICLE_QUOTE_OPTION.id
+  );
+  const allQuoteOptions = [...quoteOptions, TWO_WHEEL_VEHICLE_QUOTE_OPTION];
 
   const [quantities, setQuantities] = useState<Record<string, number>>(() => {
     const initial: Record<string, number> = {};
     quoteOptions.forEach((opt) => {
       initial[opt.id] = 0;
     });
+    initial[TWO_WHEEL_VEHICLE_QUOTE_OPTION.id] =
+      preselectTwoWheel || isTwoWheelService ? 1 : 0;
     return initial;
   });
   const [selectedExtraIds, setSelectedExtraIds] = useState<string[]>([]);
@@ -89,9 +99,6 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
   const [condition, setCondition] = useState('Moyen (Taches visibles)');
   const [agentsCount, setAgentsCount] = useState(2);
 
-  const [vehicleBrand, setVehicleBrand] = useState('Toyota');
-  const [customBrand, setCustomBrand] = useState('');
-  const [vehicleModel, setVehicleModel] = useState('');
   const [promoRemoved, setPromoRemoved] = useState(false);
   const [hasManualOffer, setHasManualOffer] = useState(false);
   const [clientOfferPrice, setClientOfferPrice] = useState<number>(0);
@@ -100,7 +107,24 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
 
   const activePromotion = !promoRemoved ? appliedPromotion : null;
 
-  const selectedQuoteLines = quoteOptions
+  const selectedServiceLines = quoteOptions
+    .map((opt) => {
+      const qty = Math.max(0, Math.round(quantities[opt.id] || 0));
+      return {
+        ...opt,
+        quantity: qty,
+        subtotal: qty * opt.unitPrice,
+      };
+    })
+    .filter((line) => line.quantity > 0);
+
+  const twoWheelQty = Math.max(
+    0,
+    Math.round(quantities[TWO_WHEEL_VEHICLE_QUOTE_OPTION.id] || 0)
+  );
+  const twoWheelSubtotal = twoWheelQty * TWO_WHEEL_VEHICLE_QUOTE_OPTION.unitPrice;
+
+  const selectedQuoteLines = allQuoteOptions
     .map((opt) => {
       const qty = Math.max(0, Math.round(quantities[opt.id] || 0));
       return {
@@ -206,15 +230,14 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
   };
 
   const buildQuotePayloadDetails = () => {
-    const resolvedBrand =
-      vehicleBrand === 'Autre marque' ? customBrand.trim() || 'Autre' : vehicleBrand;
-    const trimmedModel = vehicleModel.trim();
-
-    const quoteSummaryParts = selectedQuoteLines.map((l) => `${l.quantity}× ${l.label}`);
-    let fullServiceName = `${service.name} : ${quoteSummaryParts.join(', ')}`;
-    if (isFourWheelVehicle) {
-      const modelSuffix = trimmedModel ? ` ${trimmedModel}` : '';
-      fullServiceName = `${service.name} (${resolvedBrand}${modelSuffix}) : ${quoteSummaryParts.join(', ')}`;
+    const serviceParts = selectedServiceLines.map((l) => `${l.quantity}× ${l.label}`);
+    let fullServiceName = '';
+    if (selectedServiceLines.length === 0 && twoWheelQty > 0) {
+      fullServiceName = `${twoWheelQty}× ${TWO_WHEEL_VEHICLE_QUOTE_OPTION.label}`;
+    } else if (selectedServiceLines.length > 0 && twoWheelQty > 0) {
+      fullServiceName = `${service.name} (${serviceParts.join(', ')}) + ${twoWheelQty}× ${TWO_WHEEL_VEHICLE_QUOTE_OPTION.label}`;
+    } else {
+      fullServiceName = `${service.name} : ${serviceParts.join(', ')}`;
     }
     fullServiceName = fullServiceName.slice(0, 180);
 
@@ -229,29 +252,38 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
         : `Supplément : ${extra.label} (+${extra.price.toLocaleString('fr-FR')} FCFA)`
     );
 
-    const quoteItems: BookingServiceItem[] = selectedQuoteLines.map((line) => ({
-      serviceId: service.id,
-      serviceName: line.label,
-      serviceCategory: service.category,
-      ...(service.vehicleType ? { vehicleType: service.vehicleType } : {}),
-      quantity: line.quantity,
-      unitPrice: line.unitPrice,
-      totalPrice: line.subtotal,
-      ...(material ? { material } : {}),
-      ...(condition ? { condition } : {}),
-      agentsCount,
-      ...(isFourWheelVehicle
-        ? {
-            vehicleBrand: resolvedBrand,
-            ...(trimmedModel ? { vehicleModel: trimmedModel } : {}),
-          }
-        : {}),
-      image: service.image,
-    }));
+    const quoteItems: BookingServiceItem[] = selectedQuoteLines.map((line) => {
+      const isTwoWheel = line.id === TWO_WHEEL_VEHICLE_QUOTE_OPTION.id;
+      return {
+        serviceId: isTwoWheel ? TWO_WHEEL_VEHICLE_QUOTE_OPTION.id : service.id,
+        serviceName: line.label,
+        serviceCategory: isTwoWheel ? TWO_WHEEL_VEHICLE_QUOTE_OPTION.serviceCategory : service.category,
+        ...(!isTwoWheel && isFourWheelService ? { vehicleType: '4_wheels' as const } : {}),
+        quantity: line.quantity,
+        unitPrice: line.unitPrice,
+        totalPrice: line.subtotal,
+        ...(!isTwoWheel && material ? { material } : {}),
+        ...(condition ? { condition } : {}),
+        agentsCount,
+        image: isTwoWheel ? TWO_WHEEL_VEHICLE_QUOTE_OPTION.image : service.image,
+      };
+    });
+
+    const resolvedServiceId =
+      selectedServiceLines.length === 0 && twoWheelQty > 0
+        ? TWO_WHEEL_VEHICLE_QUOTE_OPTION.id
+        : service.id;
+
+    const resolvedCategory: Booking['serviceCategory'] =
+      selectedServiceLines.length === 0 && twoWheelQty > 0
+        ? 'Véhicules'
+        : selectedServiceLines.length > 0 && twoWheelQty > 0 && service.category !== 'Véhicules'
+        ? 'Multi-services'
+        : service.category;
 
     return {
-      resolvedBrand,
-      trimmedModel,
+      resolvedServiceId,
+      resolvedCategory,
       fullServiceName,
       formattedOptions,
       supplementalLines,
@@ -271,8 +303,8 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
     }
 
     const {
-      resolvedBrand,
-      trimmedModel,
+      resolvedServiceId,
+      resolvedCategory,
       fullServiceName,
       formattedOptions,
       supplementalLines,
@@ -297,14 +329,23 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
     );
     const nowIso = new Date().toISOString();
 
+    const bookingPhotos =
+      selectedServiceLines.length === 0 && twoWheelQty > 0
+        ? [TWO_WHEEL_VEHICLE_QUOTE_OPTION.image]
+        : twoWheelQty > 0
+        ? [service.image, TWO_WHEEL_VEHICLE_QUOTE_OPTION.image]
+        : [service.image];
+
     const newBooking: Booking = {
       id: `SHINE-${Math.floor(1000 + Math.random() * 9000)}`,
       ownerUid,
       ...(ownerUid ? { userId: ownerUid } : {}),
-      serviceId: service.id,
+      serviceId: resolvedServiceId,
       serviceName: fullServiceName,
-      serviceCategory: service.category,
-      ...(service.vehicleType ? { vehicleType: service.vehicleType } : {}),
+      serviceCategory: resolvedCategory,
+      ...(selectedServiceLines.length > 0 && isFourWheelService
+        ? { vehicleType: '4_wheels' as const }
+        : {}),
       items: quoteItems,
       clientName: clientName.trim() || defaultClientName,
       clientPhone: clientPhone.trim() || defaultClientPhone,
@@ -313,9 +354,12 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
       clientCoords,
       clientGpsActive: Boolean(detectedGps),
       details: {
-        material: material || 'Standard',
+        material:
+          selectedServiceLines.length === 0 && twoWheelQty > 0
+            ? 'Vélo, Moto & Quad'
+            : material || 'Standard',
         condition,
-        stains: isFourWheelVehicle ? ['Habitacle'] : ['Taches courantes'],
+        stains: ['Taches courantes'],
         options: [...formattedOptions, ...supplementalLines].slice(0, 12),
         ...(selectedExtras.length > 0
           ? {
@@ -327,12 +371,6 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
             }
           : {}),
         agentsCount,
-        ...(isFourWheelVehicle
-          ? {
-              vehicleBrand: resolvedBrand,
-              ...(trimmedModel ? { vehicleModel: trimmedModel } : {}),
-            }
-          : {}),
         cartItems: quoteItems,
       },
       clientOfferPrice: finalSubmittedOffer,
@@ -346,7 +384,7 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
       assignedAgents: [],
       assignedAgentIds: [],
       gpsActive: false,
-      beforePhotos: [service.image],
+      beforePhotos: bookingPhotos,
       afterPhotos: [],
       createdAt: "À l'instant",
       updatedAt: nowIso,
@@ -367,36 +405,70 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
       return;
     }
 
-    const { resolvedBrand, trimmedModel, fullServiceName, formattedOptions, quoteItems } =
-      buildQuotePayloadDetails();
+    const itemsToAdd: CartItem[] = [];
 
-    const unitPrice = Math.max(1000, Math.round(rawItemsTotal));
-    const cartItem: CartItem = {
-      cartItemId: `cart-${service.id}-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
-      serviceId: service.id,
-      serviceName: fullServiceName,
-      serviceCategory: service.category,
-      ...(service.vehicleType ? { vehicleType: service.vehicleType } : {}),
-      quantity: 1,
-      unitPrice,
-      totalPrice: unitPrice,
-      material,
-      condition,
-      options: formattedOptions,
-      quoteLines: quoteItems,
-      agentsCount,
-      duration: service.duration,
-      image: service.image,
-      ...(isFourWheelVehicle
-        ? {
-            vehicleBrand: resolvedBrand,
-            ...(trimmedModel ? { vehicleModel: trimmedModel } : {}),
-          }
-        : {}),
-      ...(activePromotion ? { promotion: activePromotion } : {}),
-    };
+    if (selectedServiceLines.length > 0) {
+      const mainSubtotal = selectedServiceLines.reduce((sum, l) => sum + l.subtotal, 0);
+      const mainSummary = `${service.name} : ${selectedServiceLines
+        .map((l) => `${l.quantity}× ${l.label}`)
+        .join(', ')}`.slice(0, 180);
+      const mainOptions = selectedServiceLines.map(
+        (line) =>
+          `${line.quantity}× ${line.label} (${line.unitPrice.toLocaleString('fr-FR')} FCFA) = ${line.subtotal.toLocaleString('fr-FR')} FCFA`
+      );
+      const mainQuoteItems: BookingServiceItem[] = selectedServiceLines.map((line) => ({
+        serviceId: service.id,
+        serviceName: line.label,
+        serviceCategory: service.category,
+        ...(isFourWheelService ? { vehicleType: '4_wheels' as const } : {}),
+        quantity: line.quantity,
+        unitPrice: line.unitPrice,
+        totalPrice: line.subtotal,
+        ...(material ? { material } : {}),
+        ...(condition ? { condition } : {}),
+        agentsCount,
+        image: service.image,
+      }));
+      const mainUnitPrice = Math.max(1000, Math.round(mainSubtotal));
+      itemsToAdd.push({
+        cartItemId: `cart-${service.id}-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
+        serviceId: service.id,
+        serviceName: mainSummary,
+        serviceCategory: service.category,
+        ...(isFourWheelService ? { vehicleType: '4_wheels' as const } : {}),
+        quantity: 1,
+        unitPrice: mainUnitPrice,
+        totalPrice: mainUnitPrice,
+        material,
+        condition,
+        options: mainOptions,
+        quoteLines: mainQuoteItems,
+        agentsCount,
+        duration: service.duration,
+        image: service.image,
+        ...(activePromotion ? { promotion: activePromotion } : {}),
+      });
+    }
 
-    onAddToCart(cartItem, selectedExtras);
+    if (twoWheelQty > 0) {
+      itemsToAdd.push({
+        cartItemId: `cart-${TWO_WHEEL_VEHICLE_QUOTE_OPTION.id}-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
+        serviceId: TWO_WHEEL_VEHICLE_QUOTE_OPTION.id,
+        serviceName: TWO_WHEEL_VEHICLE_QUOTE_OPTION.label,
+        serviceCategory: TWO_WHEEL_VEHICLE_QUOTE_OPTION.serviceCategory,
+        quantity: twoWheelQty,
+        unitPrice: TWO_WHEEL_VEHICLE_QUOTE_OPTION.unitPrice,
+        totalPrice: twoWheelSubtotal,
+        condition,
+        options: ['Tarif fixe : 5 000 FCFA / véhicule (vélo, moto ou quad)'],
+        agentsCount,
+        duration: TWO_WHEEL_VEHICLE_QUOTE_OPTION.duration,
+        image: TWO_WHEEL_VEHICLE_QUOTE_OPTION.image,
+        ...(activePromotion ? { promotion: activePromotion } : {}),
+      });
+    }
+
+    onAddToCart(itemsToAdd, selectedExtras);
   };
 
   return (
@@ -427,11 +499,10 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
           </div>
         </div>
 
-        {/* NOTE IMPORTANTE UNIQUEMENT POUR VÉHICULES À 4 ROUES */}
-        {isFourWheelVehicle && (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 flex items-start gap-2.5 text-xs text-amber-950">
+        {isFourWheelService && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2.5 flex items-start gap-2.5 text-xs text-amber-950">
             <Info className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
-            <span className="font-semibold">{VEHICLE_4W_INTERIOR_NOTE}</span>
+            <span className="font-medium">{VEHICLE_4W_INTERIOR_NOTE}</span>
           </div>
         )}
 
@@ -525,6 +596,52 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
                   </div>
                 );
               })}
+
+              {/* Option intégrée : Nettoyage de Vélo, Moto & Quad (5 000 FCFA fixe par véhicule) */}
+              <div
+                className={`px-3.5 py-3 flex items-center justify-between gap-3 transition-colors ${
+                  twoWheelQty > 0 ? 'bg-emerald-50/60' : 'bg-slate-50/40'
+                }`}
+              >
+                <div className="min-w-0 space-y-0.5">
+                  <div className="text-xs sm:text-sm font-semibold text-slate-900 flex items-center gap-1.5">
+                    <Bike className="w-4 h-4 text-emerald-700 shrink-0" />
+                    <span>{TWO_WHEEL_VEHICLE_QUOTE_OPTION.label}</span>
+                  </div>
+                  <div className="text-[11px] text-slate-500 tabular-nums">
+                    {TWO_WHEEL_VEHICLE_QUOTE_OPTION.unitPrice.toLocaleString('fr-FR')} FCFA / véhicule (vélo, moto ou quad)
+                    {twoWheelQty > 0 && (
+                      <span className="ml-2 font-bold text-emerald-800">
+                        · Sous-total : {twoWheelSubtotal.toLocaleString('fr-FR')} FCFA
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="inline-flex items-center border border-slate-200 rounded-xl bg-slate-50 p-0.5 shrink-0">
+                  <button
+                    type="button"
+                    aria-label={`Diminuer la quantité pour ${TWO_WHEEL_VEHICLE_QUOTE_OPTION.label}`}
+                    disabled={twoWheelQty <= 0}
+                    onClick={() => handleQuantityChange(TWO_WHEEL_VEHICLE_QUOTE_OPTION.id, -1)}
+                    className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-700 hover:bg-white disabled:opacity-35 transition-colors"
+                  >
+                    <Minus className="w-3.5 h-3.5" />
+                  </button>
+                  <span className="w-9 text-center text-xs font-bold text-slate-900 tabular-nums">
+                    {twoWheelQty}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={`Augmenter la quantité pour ${TWO_WHEEL_VEHICLE_QUOTE_OPTION.label}`}
+                    disabled={twoWheelQty >= 20}
+                    onClick={() => handleQuantityChange(TWO_WHEEL_VEHICLE_QUOTE_OPTION.id, 1)}
+                    className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-700 hover:bg-white disabled:opacity-35 transition-colors"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
             </div>
 
             {/* SECTION SERVICES SUPPLÉMENTAIRES */}
@@ -678,66 +795,6 @@ export const ServiceConfiguratorModal: React.FC<ServiceConfiguratorModalProps> =
             )}
           </div>
 
-          {isFourWheelVehicle && (
-            <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-4 space-y-3">
-              <div className="flex items-center gap-2 text-xs font-bold text-emerald-900">
-                <Car className="w-4 h-4 text-emerald-700" />
-                <span>Précisions sur le véhicule à 4 roues</span>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label htmlFor="veh-brand" className="text-xs font-semibold text-slate-700">
-                    Marque du véhicule *
-                  </label>
-                  <select
-                    id="veh-brand"
-                    value={vehicleBrand}
-                    onChange={(e) => setVehicleBrand(e.target.value)}
-                    required
-                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-700"
-                  >
-                    {VEHICLE_BRANDS.map((brand) => (
-                      <option key={brand} value={brand}>
-                        {brand}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {vehicleBrand === 'Autre marque' ? (
-                  <div className="space-y-1">
-                    <label htmlFor="veh-custom-brand" className="text-xs font-semibold text-slate-700">
-                      Précisez la marque *
-                    </label>
-                    <input
-                      id="veh-custom-brand"
-                      type="text"
-                      value={customBrand}
-                      onChange={(e) => setCustomBrand(e.target.value)}
-                      placeholder="Ex: Isuzu, Chery..."
-                      required
-                      className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-700"
-                    />
-                  </div>
-                ) : (
-                  <div className="space-y-1">
-                    <label htmlFor="veh-model" className="text-xs font-semibold text-slate-700">
-                      Modèle (optionnel)
-                    </label>
-                    <input
-                      id="veh-model"
-                      type="text"
-                      value={vehicleModel}
-                      onChange={(e) => setVehicleModel(e.target.value)}
-                      placeholder="Ex: Rav4, Prado, Tucson..."
-                      className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-700"
-                    />
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="space-y-1">

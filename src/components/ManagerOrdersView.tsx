@@ -1660,7 +1660,7 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
                   onChange={(e) => setPromoCategory(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs text-slate-900"
                 >
-                  <option value="Véhicules">Véhicules à 4 roues</option>
+                  <option value="Véhicules">Véhicules (4 roues, Vélo, Moto &amp; Quad)</option>
                   <option value="Mobilier">Canapés &amp; Assises</option>
                   <option value="Professionnel">Vitrerie (Baies &amp; Fenêtres)</option>
                   <option value="Literie">Matelas &amp; Articles bébé</option>
@@ -1792,7 +1792,7 @@ export const ManagerOrdersView: React.FC<ManagerOrdersViewProps> = ({
                               onChange={(e) => setEditPromoCategory(e.target.value)}
                               className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900"
                             >
-                              <option value="Véhicules">Véhicules à 4 roues</option>
+                              <option value="Véhicules">Véhicules (4 roues, Vélo, Moto &amp; Quad)</option>
                               <option value="Mobilier">Canapés &amp; Assises</option>
                               <option value="Professionnel">Vitrerie (Baies &amp; Fenêtres)</option>
                               <option value="Literie">Matelas &amp; Articles bébé</option>

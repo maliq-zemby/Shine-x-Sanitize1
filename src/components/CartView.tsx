@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   AlertTriangle,
   ArrowRight,
+  Bike,
   Check,
   Info,
   Loader2,
@@ -14,7 +15,12 @@ import {
   Tag,
   Trash2,
 } from 'lucide-react';
-import { COMMUNES, SUPPLEMENTAL_SERVICES, VEHICLE_4W_INTERIOR_NOTE } from '../data/mockData';
+import {
+  COMMUNES,
+  SUPPLEMENTAL_SERVICES,
+  TWO_WHEEL_VEHICLE_QUOTE_OPTION,
+  VEHICLE_4W_INTERIOR_NOTE,
+} from '../data/mockData';
 import {
   CommuneGrandLibreville,
   DEFAULT_QUARTIER,
@@ -53,6 +59,7 @@ interface CartViewProps {
   submitError?: string;
   onSelectCartPromotion: (promo: Promotion | null) => void;
   onToggleExtra: (extra: SupplementalServiceOption) => void;
+  onSetTwoWheelQuantity: (nextQuantity: number) => void;
   onUpdateQuantity: (cartItemId: string, nextQuantity: number) => void;
   onRemoveItem: (cartItemId: string) => void;
   onClearCart: () => void;
@@ -73,6 +80,7 @@ export const CartView: React.FC<CartViewProps> = ({
   submitError = '',
   onSelectCartPromotion,
   onToggleExtra,
+  onSetTwoWheelQuantity,
   onUpdateQuantity,
   onRemoveItem,
   onClearCart,
@@ -91,6 +99,8 @@ export const CartView: React.FC<CartViewProps> = ({
   const [hasManualOffer, setHasManualOffer] = useState(false);
 
   const pricing = computeCartPricing(items, selectedCartPromotion, catalogServices, selectedExtras);
+  const twoWheelCartItem = items.find((it) => it.serviceId === TWO_WHEEL_VEHICLE_QUOTE_OPTION.id);
+  const twoWheelQty = twoWheelCartItem ? Math.max(0, twoWheelCartItem.quantity || 0) : 0;
   const [clientOfferPrice, setClientOfferPrice] = useState<number>(pricing.finalTotal || 1000);
   const [localError, setLocalError] = useState('');
 
@@ -380,17 +390,27 @@ export const CartView: React.FC<CartViewProps> = ({
           <div className="space-y-1.5 max-w-md mx-auto">
             <h2 className="text-base font-bold text-slate-900">Votre panier est vide</h2>
             <p className="text-xs text-slate-600 leading-relaxed">
-              Parcourez nos services (canapés, tapis, matelas, vitrerie, véhicules à 4 roues), configurez vos quantités et ajoutez-les au panier pour préparer votre commande groupée.
+              Parcourez nos services (canapés, tapis, matelas, vitrerie) ou ajoutez directement le nettoyage de vélo, moto &amp; quad (5 000 FCFA/véhicule) pour préparer votre commande.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onOpenCatalog}
-            className="px-5 py-2.5 min-h-[44px] bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-2"
-          >
-            <span>Découvrir le catalogue des services</span>
-            <ArrowRight className="w-4 h-4" />
-          </button>
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <button
+              type="button"
+              onClick={onOpenCatalog}
+              className="px-5 py-2.5 min-h-[44px] bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-2"
+            >
+              <span>Découvrir le catalogue des services</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => onSetTwoWheelQuantity(1)}
+              className="px-5 py-2.5 min-h-[44px] bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-900 text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-2"
+            >
+              <Bike className="w-4 h-4 text-emerald-700" />
+              <span>Ajouter Nettoyage Vélo, Moto &amp; Quad (5 000 FCFA)</span>
+            </button>
+          </div>
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
@@ -477,6 +497,12 @@ export const CartView: React.FC<CartViewProps> = ({
                               : ''}
                           </div>
                         )}
+                        {(item.serviceId === 'srv-5' || item.vehicleType === '4_wheels') && (
+                          <div className="mt-1 rounded-lg bg-amber-50 border border-amber-200 px-2.5 py-1 text-[11px] font-medium text-amber-900 inline-flex items-center gap-1.5">
+                            <Info className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                            <span>{VEHICLE_4W_INTERIOR_NOTE}</span>
+                          </div>
+                        )}
                         {item.quoteLines && item.quoteLines.length > 0 ? (
                           <div className="mt-1.5 bg-slate-50 border border-slate-200/80 rounded-lg p-2 space-y-1">
                             {item.quoteLines.map((qLine, qIdx) => (
@@ -506,12 +532,6 @@ export const CartView: React.FC<CartViewProps> = ({
                               Détail : {item.options.join(', ')}
                             </div>
                           )
-                        )}
-                        {(item.serviceId === 'srv-5' || item.vehicleType === '4_wheels') && (
-                          <div className="pt-1 flex items-start gap-1.5 text-[11px] font-medium text-amber-900">
-                            <Info className="w-3.5 h-3.5 text-amber-700 shrink-0 mt-0.5" />
-                            <span>{VEHICLE_4W_INTERIOR_NOTE}</span>
-                          </div>
                         )}
                         <div className="text-[11px] text-slate-500 tabular-nums pt-0.5">
                           Devis unitaire configuré : {item.unitPrice.toLocaleString('fr-FR')} FCFA
@@ -567,6 +587,55 @@ export const CartView: React.FC<CartViewProps> = ({
                 </div>
               );
             })}
+
+            {/* Nettoyage de Vélo, Moto & Quad directement dans le panier */}
+            <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="space-y-0.5 min-w-0">
+                <div className="text-xs sm:text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <Bike className="w-4 h-4 text-emerald-700 shrink-0" />
+                  <span>{TWO_WHEEL_VEHICLE_QUOTE_OPTION.label}</span>
+                </div>
+                <p className="text-[11px] text-slate-600 tabular-nums">
+                  Tarif fixe unique :{' '}
+                  <strong className="text-emerald-800">5 000 FCFA / véhicule</strong> (vélo, moto ou quad)
+                  {twoWheelQty > 0 && (
+                    <span className="ml-2 font-bold text-emerald-900">
+                      · Sous-total : {(twoWheelQty * 5000).toLocaleString('fr-FR')} FCFA
+                    </span>
+                  )}
+                </p>
+              </div>
+
+              <div className="inline-flex items-center border border-slate-200 rounded-xl bg-slate-50 p-0.5 self-start sm:self-center shrink-0">
+                <button
+                  type="button"
+                  aria-label="Diminuer la quantité Nettoyage de Vélo, Moto & Quad"
+                  disabled={twoWheelQty <= 0 || isSubmitting}
+                  onClick={() => {
+                    setHasManualOffer(false);
+                    onSetTwoWheelQuantity(twoWheelQty - 1);
+                  }}
+                  className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-700 hover:bg-white disabled:opacity-35 transition-colors"
+                >
+                  <Minus className="w-3.5 h-3.5" />
+                </button>
+                <span className="w-9 text-center text-xs font-bold text-slate-900 tabular-nums">
+                  {twoWheelQty}
+                </span>
+                <button
+                  type="button"
+                  aria-label="Augmenter la quantité Nettoyage de Vélo, Moto & Quad"
+                  disabled={twoWheelQty >= 20 || isSubmitting}
+                  onClick={() => {
+                    setHasManualOffer(false);
+                    onSetTwoWheelQuantity(twoWheelQty + 1);
+                  }}
+                  className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-700 hover:bg-white disabled:opacity-35 transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
 
             {/* Services supplémentaires inside Cart */}
             <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 space-y-3 shadow-xs">

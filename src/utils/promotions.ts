@@ -153,28 +153,39 @@ export function getBookingPromoInfo(booking: Booking): BookingPromoApplied | nul
 }
 
 /**
+ * Indique si une promotion cible spécifiquement les véhicules à 4 roues.
+ */
+export function isFourWheelVehiclePromo(promo: Promotion): boolean {
+  const haystack = normalizeText(`${promo.title} ${promo.description || ''}`);
+  return /(citadine|berline|suv|pick-?up|4x4|4 roues|quatre roues|voiture|auto|berlines|citadines)/.test(
+    haystack
+  );
+}
+
+/**
+ * Indique si une promotion cible les prestations de mobilité (Vélo, Moto & Quad).
+ */
+export function isTwoWheelVehiclePromo(promo: Promotion): boolean {
+  const haystack = normalizeText(`${promo.title} ${promo.description || ''}`);
+  if (/(velo|moto|quad|deux roues)/.test(haystack)) return true;
+  return promo.serviceCategory === 'Véhicules' && !isFourWheelVehiclePromo(promo);
+}
+
+/**
  * Associe automatiquement une promotion à un service exact du catalogue
  * d'après son titre (puis sa description / catégorie) :
- * - "voiture" / "4 roues" / "citadine" / "berline" / "suv" / "pick-up" / "camion" -> Nettoyage Véhicules à 4 roues (srv-5)
  * - "canapé" / "pouf" / "chaise" / "fauteuil" -> Canapés & Assises (srv-1)
  * - "matelas" / "berceau" / "poussette" / "literie" -> Matelas & Articles bébé (srv-3)
  * - "tapis" / "moquette" -> Tapis & Moquettes (srv-4)
  * - "vitre" / "baie" / "fenêtre" -> Vitrerie (Baies & Fenêtres) (srv-8)
+ * - "citadine" / "berline" / "suv" / "pick-up" / "voiture" / "4 roues" -> Nettoyage Véhicules à 4 roues (srv-5)
+ * - "vélo" / "moto" / "quad" -> Nettoyage Vélo, Moto & Quad (velo-moto-quad)
  */
 export function matchServiceForPromotion(
   promo: Promotion,
   services: ServiceItem[]
 ): ServiceItem | null {
   const haystack = normalizeText(`${promo.title} ${promo.description || ''}`);
-
-  if (
-    /(voiture|4 roues|quatre roues|auto|automobile|citadine|berline|suv|4x4|pick-?up|camion|habitacle|lavage.*vehicule|vehicule)/.test(
-      haystack
-    )
-  ) {
-    const car = services.find((s) => s.id === 'srv-5' || s.vehicleType === '4_wheels');
-    if (car) return car;
-  }
 
   if (/(canape|pouf|chaise|fauteuil|salon|divan|mobilier|sofa)/.test(haystack)) {
     const sofa = services.find((s) => s.id === 'srv-1' || s.category === 'Mobilier');
@@ -196,8 +207,18 @@ export function matchServiceForPromotion(
     if (vitre) return vitre;
   }
 
-  // Repli sur la catégorie associée si elle désigne un service précis (hors Véhicules générique)
-  if (promo.serviceCategory && promo.serviceCategory !== 'Véhicules') {
+  if (isFourWheelVehiclePromo(promo)) {
+    const car = services.find((s) => s.id === 'srv-5' || s.vehicleType === '4_wheels');
+    if (car) return car;
+  }
+
+  if (/(velo|moto|quad|deux roues)/.test(haystack)) {
+    const twoWheel = services.find((s) => s.id === 'velo-moto-quad');
+    if (twoWheel) return twoWheel;
+  }
+
+  // Repli sur la catégorie associée si elle désigne un service du catalogue
+  if (promo.serviceCategory) {
     const byCategory = services.find((s) => s.category === promo.serviceCategory);
     if (byCategory) return byCategory;
   }

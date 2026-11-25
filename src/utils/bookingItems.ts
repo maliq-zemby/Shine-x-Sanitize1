@@ -10,6 +10,8 @@ import {
 import {
   buildBookingPromoApplied,
   computeDiscountedPrice,
+  isFourWheelVehiclePromo,
+  isTwoWheelVehiclePromo,
   matchServiceForPromotion,
 } from './promotions';
 
@@ -177,6 +179,12 @@ export function doesPromotionMatchCartItem(
   catalogServices: ServiceItem[]
 ): boolean {
   if (item.promotion && item.promotion.id === promo.id) return true;
+  if (item.serviceId === 'velo-moto-quad' && isTwoWheelVehiclePromo(promo)) {
+    return true;
+  }
+  if ((item.serviceId === 'srv-5' || item.vehicleType === '4_wheels') && isFourWheelVehiclePromo(promo)) {
+    return true;
+  }
   const matchedService = matchServiceForPromotion(promo, catalogServices);
   if (matchedService && matchedService.id === item.serviceId) return true;
   if (promo.serviceCategory && promo.serviceCategory === item.serviceCategory) return true;

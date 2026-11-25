@@ -26,9 +26,7 @@ import {
   AlertTriangle,
   ArrowRight,
   CalendarCheck,
-  Car,
   CheckCircle2,
-  ChevronRight,
   ClipboardList,
   Home,
   Info,
@@ -72,7 +70,7 @@ import {
   PROTOTYPE_EMAILS,
   PROTOTYPE_PROMO_IDS,
   SERVICES,
-  VEHICLE_4W_INTERIOR_NOTE,
+  TWO_WHEEL_VEHICLE_QUOTE_OPTION,
 } from './data/mockData';
 import { DEFAULT_GPS_POSITION } from './data/quartiers';
 import {
@@ -115,7 +113,11 @@ import {
   getCompanyValidationStatus,
   isCompanyAccessBlocked,
 } from './utils/companyValidation';
-import { matchServiceForPromotion, parsePromotionDiscount } from './utils/promotions';
+import {
+  isTwoWheelVehiclePromo,
+  matchServiceForPromotion,
+  parsePromotionDiscount,
+} from './utils/promotions';
 
 type ActiveTab = ActiveTabId;
 
@@ -134,7 +136,7 @@ function getDashboardTabForRole(role: Role): ActiveTab {
 }
 
 const STORAGE_KEYS = {
-  services: 'sxs_alp_services_prod_v4',
+  services: 'sxs_alp_services_prod_v6',
   cart: 'sxs_alp_cart_v1',
   cartPromo: 'sxs_alp_cart_promo_v1',
   cartExtras: 'sxs_alp_cart_extras_v1',
@@ -146,6 +148,8 @@ const LEGACY_PROTOTYPE_KEYS = [
   'sxs_alp_services_prod_v1',
   'sxs_alp_services_prod_v2',
   'sxs_alp_services_prod_v3',
+  'sxs_alp_services_prod_v4',
+  'sxs_alp_services_prod_v5',
   'sxs_alp_bookings_v2',
   'sxs_alp_promotions_v2',
   'sxs_alp_users_v2',
@@ -231,6 +235,7 @@ export default function App() {
 
   const [selectedService, setSelectedService] = useState<ServiceItem | null>(null);
   const [configuratorIntent, setConfiguratorIntent] = useState<'order' | 'cart'>('order');
+  const [configuratorPreselectTwoWheel, setConfiguratorPreselectTwoWheel] = useState(false);
   const [activePromotion, setActivePromotion] = useState<Promotion | null>(null);
   const [pendingBooking, setPendingBooking] = useState<Booking | null>(null);
   const pendingBookingFromCartRef = useRef(false);
@@ -1470,36 +1475,47 @@ export default function App() {
   };
 
   const handleAddConfiguredItemToCart = (
-    item: CartItem,
+    incoming: CartItem | CartItem[],
     selectedExtras: SupplementalServiceOption[] = []
   ) => {
+    const itemsToAdd = Array.isArray(incoming) ? incoming : [incoming];
+    if (itemsToAdd.length === 0) return;
+
     setCartSubmitError('');
-    const normalizedOpts = [...(item.options || [])].sort().join('|');
     setCartItems((prev) => {
-      const existingIdx = prev.findIndex(
-        (existing) =>
-          existing.serviceId === item.serviceId &&
-          (existing.material || '') === (item.material || '') &&
-          (existing.condition || '') === (item.condition || '') &&
-          (existing.vehicleBrand || '') === (item.vehicleBrand || '') &&
-          (existing.vehicleModel || '') === (item.vehicleModel || '') &&
-          (existing.vehicleSeats || 0) === (item.vehicleSeats || 0) &&
-          [...(existing.options || [])].sort().join('|') === normalizedOpts
-      );
-      if (existingIdx >= 0) {
-        return prev.map((existing, idx) => {
-          if (idx !== existingIdx) return existing;
-          const nextQty = Math.min(20, (existing.quantity || 1) + (item.quantity || 1));
-          return {
-            ...existing,
-            quantity: nextQty,
-            unitPrice: item.unitPrice,
-            totalPrice: nextQty * item.unitPrice,
-            promotion: item.promotion || existing.promotion,
-          };
-        });
+      let next = [...prev];
+      for (const item of itemsToAdd) {
+        const normalizedOpts = [...(item.options || [])].sort().join('|');
+        const existingIdx = next.findIndex(
+          (existing) =>
+            existing.serviceId === item.serviceId &&
+            (existing.material || '') === (item.material || '') &&
+            (existing.condition || '') === (item.condition || '') &&
+            (existing.vehicleBrand || '') === (item.vehicleBrand || '') &&
+            (existing.vehicleModel || '') === (item.vehicleModel || '') &&
+            (existing.vehicleSeats || 0) === (item.vehicleSeats || 0) &&
+            [...(existing.options || [])].sort().join('|') === normalizedOpts
+        );
+        if (existingIdx >= 0) {
+          next = next.map((existing, idx) => {
+            if (idx !== existingIdx) return existing;
+            const nextQty = Math.min(20, (existing.quantity || 1) + (item.quantity || 1));
+            return {
+              ...existing,
+              quantity: nextQty,
+              unitPrice: item.unitPrice,
+              totalPrice: nextQty * item.unitPrice,
+              promotion: item.promotion || existing.promotion,
+            };
+          });
+        } else {
+          next = [
+            ...next.slice(0, 24),
+            { ...item, totalPrice: item.unitPrice * (item.quantity || 1) },
+          ];
+        }
       }
-      return [...prev.slice(0, 24), { ...item, totalPrice: item.unitPrice * (item.quantity || 1) }];
+      return next;
     });
     if (selectedExtras.length > 0) {
       setCartExtras((prev) => {
@@ -1508,16 +1524,59 @@ export default function App() {
         return Array.from(merged.values());
       });
     }
-    if (item.promotion) {
-      setCartPromotion((prev) => prev || item.promotion || null);
+    const promoFromItems = itemsToAdd.find((it) => Boolean(it.promotion))?.promotion || null;
+    if (promoFromItems) {
+      setCartPromotion((prev) => prev || promoFromItems);
     }
     setSelectedService(null);
     setActivePromotion(null);
+    setConfiguratorPreselectTwoWheel(false);
+    const labelSummary = itemsToAdd.map((it) => it.serviceName).join(' + ');
     setCartFeedback(
       selectedExtras.length > 0
-        ? `« ${item.serviceName} » et ${selectedExtras.length} supplément${selectedExtras.length > 1 ? 's' : ''} ajoutés au panier.`
-        : `« ${item.serviceName} » ajouté au panier.`
+        ? `« ${labelSummary} » et ${selectedExtras.length} supplément${selectedExtras.length > 1 ? 's' : ''} ajoutés au panier.`
+        : `« ${labelSummary} » ajouté au panier.`
     );
+  };
+
+  const handleSetCartTwoWheelQuantity = (nextQty: number) => {
+    const clamped = Math.max(0, Math.min(20, Math.round(nextQty || 0)));
+    setCartSubmitError('');
+    setCartItems((prev) => {
+      const existingIdx = prev.findIndex(
+        (it) => it.serviceId === TWO_WHEEL_VEHICLE_QUOTE_OPTION.id
+      );
+      if (clamped <= 0) {
+        return prev.filter((it) => it.serviceId !== TWO_WHEEL_VEHICLE_QUOTE_OPTION.id);
+      }
+      if (existingIdx >= 0) {
+        return prev.map((it, idx) =>
+          idx === existingIdx
+            ? {
+                ...it,
+                quantity: clamped,
+                unitPrice: TWO_WHEEL_VEHICLE_QUOTE_OPTION.unitPrice,
+                totalPrice: clamped * TWO_WHEEL_VEHICLE_QUOTE_OPTION.unitPrice,
+              }
+            : it
+        );
+      }
+      const newCartItem: CartItem = {
+        cartItemId: `cart-${TWO_WHEEL_VEHICLE_QUOTE_OPTION.id}-${Date.now()}`,
+        serviceId: TWO_WHEEL_VEHICLE_QUOTE_OPTION.id,
+        serviceName: TWO_WHEEL_VEHICLE_QUOTE_OPTION.label,
+        serviceCategory: TWO_WHEEL_VEHICLE_QUOTE_OPTION.serviceCategory,
+        quantity: clamped,
+        unitPrice: TWO_WHEEL_VEHICLE_QUOTE_OPTION.unitPrice,
+        totalPrice: clamped * TWO_WHEEL_VEHICLE_QUOTE_OPTION.unitPrice,
+        condition: 'Moyen (Taches visibles)',
+        options: ['Tarif fixe : 5 000 FCFA / véhicule (vélo, moto ou quad)'],
+        agentsCount: 2,
+        duration: TWO_WHEEL_VEHICLE_QUOTE_OPTION.duration,
+        image: TWO_WHEEL_VEHICLE_QUOTE_OPTION.image,
+      };
+      return [...prev.slice(0, 24), newCartItem];
+    });
   };
 
   const handleToggleCartExtra = (extra: SupplementalServiceOption) => {
@@ -1531,9 +1590,11 @@ export default function App() {
   const openServiceConfigurator = (
     service: ServiceItem,
     intent: 'order' | 'cart' = 'order',
-    promoOverride?: Promotion | null
+    promoOverride?: Promotion | null,
+    preselectTwoWheel = false
   ) => {
     setConfiguratorIntent(intent);
+    setConfiguratorPreselectTwoWheel(preselectTwoWheel);
     if (promoOverride !== undefined) {
       setActivePromotion(promoOverride);
     }
@@ -3386,31 +3447,6 @@ export default function App() {
               </div>
             </section>
 
-            {/* Quick-Access Vehicle Card (Mes Réservations & GPS, Suivi et Commande et Vélo/Moto/Quad supprimés) */}
-            {!isManagerOrAdmin && services.some((s) => s.id === 'srv-5') && (
-              <section>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const fourWheelSrv = services.find((s) => s.id === 'srv-5');
-                    if (fourWheelSrv) openServiceConfigurator(fourWheelSrv, 'order', null);
-                  }}
-                  className="w-full text-left bg-white hover:border-emerald-700 border border-slate-200 rounded-2xl p-5 shadow-sm transition-colors flex items-start justify-between gap-4"
-                >
-                  <div className="space-y-1.5">
-                    <div className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                      <Car className="w-4 h-4 text-emerald-700" />
-                      <span>Nettoyage Véhicules à 4 roues</span>
-                    </div>
-                    <p className="text-xs text-slate-600 leading-relaxed">
-                      Nettoyage intérieur complet pour citadine, berline, SUV, pick-up et camion.
-                    </p>
-                  </div>
-                  <ChevronRight className="w-4 h-4 text-slate-400 shrink-0 mt-1" />
-                </button>
-              </section>
-            )}
-
             {/* DEDICATED PROMOTIONS SECTION (Live Active Company Announcements) */}
             {approvedPromotions.length > 0 && (
               <section className="space-y-4">
@@ -3451,6 +3487,8 @@ export default function App() {
                           const matchedService = matchServiceForPromotion(promo, services);
                           if (matchedService) {
                             openServiceConfigurator(matchedService, 'order', promo);
+                          } else if (isTwoWheelVehiclePromo(promo) && services[0]) {
+                            openServiceConfigurator(services[0], 'order', promo, true);
                           } else {
                             setActivePromotion(promo);
                             setActiveTab('services');
@@ -3512,65 +3550,87 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {visibleCatalogServices.map((service) => {
-                  const isFourWheel = service.id === 'srv-5' || service.vehicleType === '4_wheels';
-                  return (
-                    <div
-                      key={service.id}
-                      className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm flex flex-col justify-between"
-                    >
-                      <div>
-                        <div className="h-48 overflow-hidden bg-slate-100">
-                          <img
-                            src={service.image}
-                            alt={service.name}
-                            className="w-full h-full object-cover"
-                            referrerPolicy="no-referrer"
-                          />
-                        </div>
-                        <div className="p-5 space-y-2">
-                          <div className="text-xs font-medium text-emerald-800 flex items-center gap-2">
-                            <span>{service.category}</span>
-                            <span aria-hidden="true">·</span>
-                            <span>{service.duration}</span>
-                          </div>
-                          <h3 className="text-base font-bold text-slate-900">{service.name}</h3>
-                          <p className="text-xs text-slate-600 leading-relaxed">
-                            {service.description}
-                          </p>
-                          {isFourWheel && (
-                            <div className="mt-2 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2 text-[11px] font-medium text-amber-950 flex items-start gap-1.5">
-                              <Info className="w-3.5 h-3.5 text-amber-700 shrink-0 mt-0.5" />
-                              <span>{VEHICLE_4W_INTERIOR_NOTE}</span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="p-5 pt-0 space-y-2">
-                        <button
-                          type="button"
-                          onClick={() => openServiceConfigurator(service, 'order', null)}
-                          className="w-full py-2.5 min-h-[44px] px-4 bg-slate-900 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-2"
-                        >
-                          <Sliders className="w-3.5 h-3.5" />
-                          <span>Configurer &amp; Réserver</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => openServiceConfigurator(service, 'cart', null)}
-                          className="w-full py-2.5 min-h-[44px] px-4 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-900 text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-2"
-                        >
-                          <ShoppingCart className="w-3.5 h-3.5 text-emerald-700" />
-                          <span>Ajouter au panier</span>
-                        </button>
-                      </div>
+              {visibleCatalogServices.length === 0 ? (
+                <div className="bg-white rounded-2xl border border-slate-200 p-6 sm:p-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm">
+                  <div className="space-y-1">
+                    <div className="text-sm font-bold text-slate-900">
+                      Aucun service dans cette catégorie pour le moment
                     </div>
-                  );
-                })}
-              </div>
+                    <p className="text-xs text-slate-600">
+                      Affichez tous les services pour configurer votre prestation et calculer votre devis en FCFA.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setServiceFilter('all')}
+                    className="px-4 py-2.5 min-h-[40px] bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold rounded-xl transition-colors self-start sm:self-center shrink-0"
+                  >
+                    Voir tous les services
+                  </button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {visibleCatalogServices.map((service) => {
+                    const isFourWheel = service.id === 'srv-5' || service.vehicleType === '4_wheels';
+                    return (
+                      <div
+                        key={service.id}
+                        className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm flex flex-col justify-between"
+                      >
+                        <div>
+                          <div className="h-48 overflow-hidden bg-slate-100">
+                            <img
+                              src={service.image}
+                              alt={service.name}
+                              className="w-full h-full object-cover"
+                              referrerPolicy="no-referrer"
+                            />
+                          </div>
+                          <div className="p-5 space-y-2">
+                            <div className="text-xs font-medium text-emerald-800 flex items-center gap-2">
+                              <span>{service.category}</span>
+                              <span aria-hidden="true">·</span>
+                              <span>{service.duration}</span>
+                            </div>
+                            <h3 className="text-base font-bold text-slate-900">{service.name}</h3>
+                            <p className="text-xs text-slate-600 leading-relaxed">
+                              {service.description}
+                            </p>
+                            {isFourWheel && (
+                              <div className="mt-2 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-[11px] font-medium text-amber-900 flex items-start gap-1.5">
+                                <Info className="w-3.5 h-3.5 text-amber-700 shrink-0 mt-0.5" />
+                                <span>
+                                  Nettoyage intérieur uniquement (citadine, berline, SUV, pick-up / 4x4).
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="p-5 pt-0 space-y-2">
+                          <button
+                            type="button"
+                            onClick={() => openServiceConfigurator(service, 'order', null)}
+                            className="w-full py-2.5 min-h-[44px] px-4 bg-slate-900 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-2"
+                          >
+                            <Sliders className="w-3.5 h-3.5" />
+                            <span>Configurer &amp; Réserver</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => openServiceConfigurator(service, 'cart', null)}
+                            className="w-full py-2.5 min-h-[44px] px-4 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-900 text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-2"
+                          >
+                            <ShoppingCart className="w-3.5 h-3.5 text-emerald-700" />
+                            <span>Ajouter au panier</span>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </section>
           </div>
         )}
@@ -3635,9 +3695,11 @@ export default function App() {
                         <h3 className="text-base font-bold text-slate-900">{service.name}</h3>
                         <p className="text-xs text-slate-600 leading-relaxed">{service.description}</p>
                         {isFourWheel && (
-                          <div className="mt-2 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2 text-[11px] font-medium text-amber-950 flex items-start gap-1.5">
+                          <div className="mt-2 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-[11px] font-medium text-amber-900 flex items-start gap-1.5">
                             <Info className="w-3.5 h-3.5 text-amber-700 shrink-0 mt-0.5" />
-                            <span>{VEHICLE_4W_INTERIOR_NOTE}</span>
+                            <span>
+                              Nettoyage intérieur uniquement (citadine, berline, SUV, pick-up / 4x4).
+                            </span>
                           </div>
                         )}
                       </div>
@@ -3682,6 +3744,7 @@ export default function App() {
             submitError={cartSubmitError}
             onSelectCartPromotion={setCartPromotion}
             onToggleExtra={handleToggleCartExtra}
+            onSetTwoWheelQuantity={handleSetCartTwoWheelQuantity}
             onUpdateQuantity={handleUpdateCartQuantity}
             onRemoveItem={handleRemoveCartItem}
             onClearCart={handleClearCart}
@@ -3822,11 +3885,13 @@ export default function App() {
           defaultClientPhone={userProfile?.phone || '+241 '}
           appliedPromotion={activePromotion}
           initialIntent={configuratorIntent}
+          preselectTwoWheel={configuratorPreselectTwoWheel}
           onRemovePromotion={() => setActivePromotion(null)}
           onClose={() => {
             setSelectedService(null);
             setActivePromotion(null);
             setConfiguratorIntent('order');
+            setConfiguratorPreselectTwoWheel(false);
           }}
           onSubmitBooking={handleCreateBooking}
           onAddToCart={handleAddConfiguredItemToCart}
